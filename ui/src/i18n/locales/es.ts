@@ -111,6 +111,8 @@ export const es: TranslationMap = {
   },
   chat: {
     disconnected: "Desconectado de la puerta de enlace.",
+    newWindowTitle: "Crear nueva ventana de chat",
+    newWindowLabel: "Nuevo chat",
     refreshTitle: "Actualizar datos del chat",
     thinkingToggle: "Alternar salida de pensamiento/trabajo del asistente",
     focusToggle: "Alternar modo de enfoque (ocultar barra lateral + cabecera)",

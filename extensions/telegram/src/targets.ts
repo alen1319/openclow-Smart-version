@@ -6,6 +6,8 @@ export type TelegramTarget = {
 
 const TELEGRAM_NUMERIC_CHAT_ID_REGEX = /^-?\d+$/;
 const TELEGRAM_USERNAME_REGEX = /^[A-Za-z0-9_]{5,}$/i;
+const TELEGRAM_ROUTE_PREFIX_REGEX = /^(group|direct|user|channel|chat):/i;
+const TELEGRAM_ACCOUNT_ROUTE_PREFIX_REGEX = /^([^:]+):(group|direct|user|channel|chat):(.*)$/i;
 
 export function stripTelegramInternalPrefixes(to: string): string {
   let trimmed = to.trim();
@@ -16,9 +18,18 @@ export function stripTelegramInternalPrefixes(to: string): string {
         strippedTelegramPrefix = true;
         return trimmed.replace(/^(telegram|tg):/i, "").trim();
       }
-      // Legacy internal form: `telegram:group:<id>` (still emitted by session keys).
-      if (strippedTelegramPrefix && /^group:/i.test(trimmed)) {
-        return trimmed.replace(/^group:/i, "").trim();
+      // Legacy internal forms emitted by session keys/routes, for example:
+      // - telegram:group:<id>
+      // - telegram:direct:<id>
+      // - telegram:<accountId>:direct:<id>
+      if (strippedTelegramPrefix && TELEGRAM_ROUTE_PREFIX_REGEX.test(trimmed)) {
+        return trimmed.replace(TELEGRAM_ROUTE_PREFIX_REGEX, "").trim();
+      }
+      if (strippedTelegramPrefix) {
+        const accountScopedRoute = TELEGRAM_ACCOUNT_ROUTE_PREFIX_REGEX.exec(trimmed);
+        if (accountScopedRoute?.[3]) {
+          return accountScopedRoute[3].trim();
+        }
       }
       return trimmed;
     })();

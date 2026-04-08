@@ -1353,8 +1353,8 @@ export function renderChat(props: ChatProps) {
                   <button
                     class="btn btn--ghost"
                     @click=${props.onNewSession}
-                    title="New session"
-                    aria-label="New session"
+                    title="New chat window"
+                    aria-label="New chat window"
                   >
                     ${icons.plus}
                   </button>

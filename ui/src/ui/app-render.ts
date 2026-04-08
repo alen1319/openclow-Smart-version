@@ -4,6 +4,7 @@ import { getSafeLocalStorage } from "../local-storage.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
 import { renderUsageTab } from "./app-render-usage-tab.ts";
 import {
+  createNewChatWindow,
   renderChatControls,
   renderChatMobileToggle,
   renderChatSessionSelect,
@@ -747,6 +748,11 @@ export function renderApp(state: AppViewState) {
               skillsReport: state.skillsReport,
               cronJobs: state.cronJobs,
               cronStatus: state.cronStatus,
+              channelsSnapshot: state.channelsSnapshot,
+              channelsError: state.channelsError,
+              debugStatus: state.debugStatus,
+              debugHealth: state.debugHealth,
+              runtimeMeta: state.debugRuntimeMeta,
               attentionItems: state.attentionItems,
               eventLog: state.eventLog,
               overviewLogLines: state.overviewLogLines,
@@ -1597,7 +1603,7 @@ export function renderApp(state: AppViewState) {
               canAbort: Boolean(state.chatRunId),
               onAbort: () => void state.handleAbortChat(),
               onQueueRemove: (id) => state.removeQueuedMessage(id),
-              onNewSession: () => state.handleSendChat("/new", { restoreDraft: true }),
+              onNewSession: () => void createNewChatWindow(state),
               onClearHistory: async () => {
                 if (!state.client || !state.connected) {
                   return;

@@ -160,6 +160,8 @@ export const pt_BR: TranslationMap = {
   },
   chat: {
     disconnected: "Desconectado do gateway.",
+    newWindowTitle: "Criar nova janela de chat",
+    newWindowLabel: "Novo chat",
     refreshTitle: "Atualizar dados do chat",
     thinkingToggle: "Alternar saída de pensamento/trabalho do assistente",
     focusToggle: "Alternar modo de foco (ocultar barra lateral + cabeçalho da página)",

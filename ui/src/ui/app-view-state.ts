@@ -301,6 +301,7 @@ export type AppViewState = {
     debugLoading: boolean;
     debugStatus: StatusSummary | null;
     debugHealth: HealthSummary | null;
+    debugRuntimeMeta: import("./types.js").RuntimeMeta | null;
     debugModels: ModelCatalogEntry[];
     debugHeartbeat: unknown;
     debugCallMethod: string;

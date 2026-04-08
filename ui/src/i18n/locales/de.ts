@@ -112,6 +112,8 @@ export const de: TranslationMap = {
   },
   chat: {
     disconnected: "Verbindung zum Gateway getrennt.",
+    newWindowTitle: "Neues Chatfenster erstellen",
+    newWindowLabel: "Neuer Chat",
     refreshTitle: "Chat-Daten aktualisieren",
     thinkingToggle: "Ausgabe des Assistenten ein-/ausblenden",
     focusToggle: "Fokusmodus ein-/ausschalten (Seitenleiste + Kopfzeile ausblenden)",

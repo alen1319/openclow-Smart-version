@@ -1,15 +1,120 @@
+import fs from "node:fs";
+import path from "node:path";
 import { resolveMainSessionKeyFromConfig } from "../../config/sessions.js";
 import {
   loadOrCreateDeviceIdentity,
   publicKeyRawBase64UrlFromPem,
 } from "../../infra/device-identity.js";
+import { resolveCommitHash } from "../../infra/git-commit.js";
+import { resolveGitHeadPath } from "../../infra/git-root.js";
 import { getLastHeartbeatEvent } from "../../infra/heartbeat-events.js";
 import { setHeartbeatsEnabled } from "../../infra/heartbeat-runner.js";
+import { resolveOpenClawPackageRootSync } from "../../infra/openclaw-root.js";
 import { enqueueSystemEvent, isSystemEventContextChanged } from "../../infra/system-events.js";
 import { listSystemPresence, updateSystemPresence } from "../../infra/system-presence.js";
+import { resolveRuntimeServiceVersion } from "../../version.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { broadcastPresenceSnapshot } from "../server/presence-events.js";
 import type { GatewayRequestHandlers } from "./types.js";
+
+type RuntimeSourceKind = "npm-package" | "local-tree-build" | "unknown";
+
+type RuntimeMetaPayload = {
+  runtimeVersion: string;
+  commit: string | null;
+  pid: number;
+  sourceKind: RuntimeSourceKind;
+  sourceLabel: string;
+  entryPath: string | null;
+  cwd: string;
+  packageRoot: string | null;
+  branch: string | null;
+  tag: string | null;
+};
+
+function normalizeAbsolutePath(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return path.resolve(trimmed);
+}
+
+function readGitRef(searchDir: string): { branch: string | null; tag: string | null } {
+  const headPath = resolveGitHeadPath(searchDir);
+  if (!headPath) {
+    return { branch: null, tag: null };
+  }
+  try {
+    const head = fs.readFileSync(headPath, "utf-8").trim();
+    if (!head.startsWith("ref:")) {
+      return { branch: null, tag: null };
+    }
+    const ref = head.replace(/^ref:\s*/i, "").trim();
+    if (ref.startsWith("refs/heads/")) {
+      return { branch: ref.slice("refs/heads/".length), tag: null };
+    }
+    if (ref.startsWith("refs/tags/")) {
+      return { branch: null, tag: ref.slice("refs/tags/".length) };
+    }
+    return { branch: null, tag: null };
+  } catch {
+    return { branch: null, tag: null };
+  }
+}
+
+function resolveRuntimeSourceKind(params: {
+  packageRoot: string | null;
+  entryPath: string | null;
+}): RuntimeSourceKind {
+  const packageRoot = params.packageRoot?.toLowerCase() ?? "";
+  const entryPath = params.entryPath?.toLowerCase() ?? "";
+  const marker = `${path.sep}node_modules${path.sep}`.toLowerCase();
+  if (packageRoot.includes(marker) || entryPath.includes(marker)) {
+    return "npm-package";
+  }
+  if (params.packageRoot && resolveGitHeadPath(params.packageRoot)) {
+    return "local-tree-build";
+  }
+  return "unknown";
+}
+
+function resolveRuntimeSourceLabel(kind: RuntimeSourceKind): string {
+  if (kind === "npm-package") {
+    return "npm official package";
+  }
+  if (kind === "local-tree-build") {
+    return "local source tree build";
+  }
+  return "unknown runtime source";
+}
+
+function buildRuntimeMetaPayload(): RuntimeMetaPayload {
+  const entryPath = normalizeAbsolutePath(process.argv[1]);
+  const packageRoot = resolveOpenClawPackageRootSync({
+    cwd: process.cwd(),
+    argv1: process.argv[1],
+    moduleUrl: import.meta.url,
+  });
+  const sourceKind = resolveRuntimeSourceKind({ packageRoot, entryPath });
+  const gitRef = readGitRef(packageRoot ?? process.cwd());
+  return {
+    runtimeVersion: resolveRuntimeServiceVersion(process.env),
+    commit: resolveCommitHash({
+      cwd: packageRoot ?? process.cwd(),
+      moduleUrl: import.meta.url,
+      env: process.env,
+    }),
+    pid: process.pid,
+    sourceKind,
+    sourceLabel: resolveRuntimeSourceLabel(sourceKind),
+    entryPath,
+    cwd: process.cwd(),
+    packageRoot,
+    branch: gitRef.branch,
+    tag: gitRef.tag,
+  };
+}
 
 export const systemHandlers: GatewayRequestHandlers = {
   "gateway.identity.get": ({ respond }) => {
@@ -25,6 +130,9 @@ export const systemHandlers: GatewayRequestHandlers = {
   },
   "last-heartbeat": ({ respond }) => {
     respond(true, getLastHeartbeatEvent(), undefined);
+  },
+  "runtime.meta": ({ respond }) => {
+    respond(true, buildRuntimeMetaPayload(), undefined);
   },
   "set-heartbeats": ({ params, respond }) => {
     const enabled = params.enabled;

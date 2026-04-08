@@ -615,6 +615,19 @@ export type SkillStatusReport = {
   skills: SkillStatusEntry[];
 };
 
+export type RuntimeMeta = {
+  runtimeVersion: string;
+  commit: string | null;
+  pid: number;
+  sourceKind: "npm-package" | "local-tree-build" | "unknown";
+  sourceLabel: string;
+  entryPath: string | null;
+  cwd: string;
+  packageRoot: string | null;
+  branch: string | null;
+  tag: string | null;
+};
+
 export type StatusSummary = Record<string, unknown>;
 
 export type HealthSnapshot = Record<string, unknown>;

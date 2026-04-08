@@ -107,6 +107,7 @@ const BASE_METHODS = [
   "cron.runs",
   "gateway.identity.get",
   "system-presence",
+  "runtime.meta",
   "system-event",
   "send",
   "agent",

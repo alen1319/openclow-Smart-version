@@ -157,6 +157,8 @@ export const zh_TW: TranslationMap = {
   },
   chat: {
     disconnected: "已斷開與網關的連接。",
+    newWindowTitle: "建立新聊天視窗",
+    newWindowLabel: "新聊天",
     refreshTitle: "刷新聊天數據",
     thinkingToggle: "切換助手思考/工作輸出",
     focusToggle: "切換專注模式 (隱藏側邊欄 + 頁面頁眉)",

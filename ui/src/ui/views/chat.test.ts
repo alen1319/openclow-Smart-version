@@ -271,6 +271,11 @@ function createOverviewProps(overrides: Partial<OverviewProps> = {}): OverviewPr
     skillsReport: null,
     cronJobs: [],
     cronStatus: null,
+    channelsSnapshot: null,
+    channelsError: null,
+    debugStatus: null,
+    debugHealth: null,
+    runtimeMeta: null,
     attentionItems: [],
     eventLog: [],
     overviewLogLines: [],
@@ -702,7 +707,7 @@ describe("chat view", () => {
     expect(stopButton).not.toBeUndefined();
     stopButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(onAbort).toHaveBeenCalledTimes(1);
-    expect(container.textContent).not.toContain("New session");
+    expect(container.textContent).not.toContain("New chat window");
   });
 
   it("shows a stop button when aborting is available without an active stream", () => {
@@ -723,10 +728,10 @@ describe("chat view", () => {
     const sendButton = container.querySelector<HTMLButtonElement>('button[title="Send"]');
     expect(stopButton).not.toBeNull();
     expect(sendButton).toBeNull();
-    expect(container.textContent).not.toContain("New session");
+    expect(container.textContent).not.toContain("New chat window");
   });
 
-  it("shows a new session button when aborting is unavailable", () => {
+  it("shows a new chat window button when aborting is unavailable", () => {
     const container = document.createElement("div");
     const onNewSession = vi.fn();
     render(
@@ -740,7 +745,7 @@ describe("chat view", () => {
     );
 
     const newSessionButton = container.querySelector<HTMLButtonElement>(
-      'button[title="New session"]',
+      'button[title="New chat window"]',
     );
     expect(newSessionButton).not.toBeUndefined();
     newSessionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

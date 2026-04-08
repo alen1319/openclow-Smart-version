@@ -185,6 +185,19 @@ function expectMemoryConversation(params: {
   }
 }
 
+async function readChatMemoryFile(tempDir: string): Promise<{ file: string | null; content: string }> {
+  const memoryDir = path.join(tempDir, "memory");
+  const files = await fs.readdir(memoryDir);
+  const file = files.find((entry) => entry.endsWith("-chat-memory.md")) ?? null;
+  if (!file) {
+    return { file: null, content: "" };
+  }
+  return {
+    file,
+    content: await fs.readFile(path.join(memoryDir, file), "utf-8"),
+  };
+}
+
 describe("session-memory hook", () => {
   it("skips non-command events", async () => {
     const tempDir = await createCaseWorkspace("workspace");
@@ -210,6 +223,118 @@ describe("session-memory hook", () => {
     await handler(event);
 
     // Memory directory should not be created for other commands
+    const memoryDir = path.join(tempDir, "memory");
+    await expect(fs.access(memoryDir)).rejects.toThrow();
+  });
+
+  it("appends internal message:received turns to chat memory", async () => {
+    const tempDir = await createCaseWorkspace("workspace");
+    const cfg = {
+      agents: { defaults: { workspace: tempDir } },
+    } satisfies OpenClawConfig;
+
+    await handler(
+      createHookEvent("message", "received", "agent:main:main", {
+        cfg,
+        channelId: "webchat",
+        from: "control-ui",
+        content: "Remember this release checklist",
+        messageId: "msg-received-1",
+      }),
+    );
+
+    const { file, content } = await readChatMemoryFile(tempDir);
+    expect(file).not.toBeNull();
+    expect(content).toContain("**Event**: message:received");
+    expect(content).toContain("user: Remember this release checklist");
+  });
+
+  it("appends internal message:sent turns to chat memory", async () => {
+    const tempDir = await createCaseWorkspace("workspace");
+    const cfg = {
+      agents: { defaults: { workspace: tempDir } },
+    } satisfies OpenClawConfig;
+
+    await handler(
+      createHookEvent("message", "sent", "agent:main:main", {
+        cfg,
+        channelId: "webchat",
+        to: "chat-window",
+        content: "Captured. I stored this for future recall.",
+        success: true,
+        messageId: "msg-sent-1",
+      }),
+    );
+
+    const { file, content } = await readChatMemoryFile(tempDir);
+    expect(file).not.toBeNull();
+    expect(content).toContain("**Event**: message:sent");
+    expect(content).toContain("assistant: Captured. I stored this for future recall.");
+  });
+
+  it("skips message:sent turn append when gateway already persisted webchat memory", async () => {
+    const tempDir = await createCaseWorkspace("workspace");
+    const cfg = {
+      agents: { defaults: { workspace: tempDir } },
+    } satisfies OpenClawConfig;
+
+    await handler(
+      createHookEvent("message", "sent", "agent:main:main", {
+        cfg,
+        channelId: "webchat",
+        source: "gateway.chat.send",
+        gatewayMemoryPersisted: true,
+        to: "chat-window",
+        content: "This should be skipped because gateway already wrote it.",
+        success: true,
+        messageId: "msg-sent-skip-1",
+      }),
+    );
+
+    const memoryDir = path.join(tempDir, "memory");
+    await expect(fs.access(memoryDir)).rejects.toThrow();
+  });
+
+  it("keeps message:sent turn append when gateway memory persistence failed", async () => {
+    const tempDir = await createCaseWorkspace("workspace");
+    const cfg = {
+      agents: { defaults: { workspace: tempDir } },
+    } satisfies OpenClawConfig;
+
+    await handler(
+      createHookEvent("message", "sent", "agent:main:main", {
+        cfg,
+        channelId: "webchat",
+        source: "gateway.chat.send",
+        gatewayMemoryPersisted: false,
+        to: "chat-window",
+        content: "Fallback write should still be captured.",
+        success: true,
+        messageId: "msg-sent-fallback-1",
+      }),
+    );
+
+    const { file, content } = await readChatMemoryFile(tempDir);
+    expect(file).not.toBeNull();
+    expect(content).toContain("**Event**: message:sent");
+    expect(content).toContain("assistant: Fallback write should still be captured.");
+  });
+
+  it("ignores non-internal message events", async () => {
+    const tempDir = await createCaseWorkspace("workspace");
+    const cfg = {
+      agents: { defaults: { workspace: tempDir } },
+    } satisfies OpenClawConfig;
+
+    await handler(
+      createHookEvent("message", "received", "agent:main:main", {
+        cfg,
+        channelId: "telegram",
+        from: "external-user",
+        content: "Do not persist this in chat memory",
+      }),
+    );
+
     const memoryDir = path.join(tempDir, "memory");
     await expect(fs.access(memoryDir)).rejects.toThrow();
   });

@@ -177,6 +177,29 @@ export function renderChatSessionSelect(state: AppViewState) {
   `;
 }
 
+export async function createNewChatWindow(state: AppViewState) {
+  if (!state.client || !state.connected) {
+    return;
+  }
+  state.lastError = null;
+  const agentId = parseAgentSessionKey(state.sessionKey)?.agentId;
+  try {
+    const params: { agentId?: string } = {};
+    if (typeof agentId === "string" && agentId.trim()) {
+      params.agentId = agentId.trim();
+    }
+    const res = await state.client.request<{ key?: unknown }>("sessions.create", params);
+    const nextSessionKey = typeof res?.key === "string" ? res.key.trim() : "";
+    if (!nextSessionKey) {
+      state.lastError = "Failed to create chat window: missing session key";
+      return;
+    }
+    switchChatSession(state, nextSessionKey);
+  } catch (err) {
+    state.lastError = `Failed to create chat window: ${String(err)}`;
+  }
+}
+
 export function renderChatControls(state: AppViewState) {
   const hideCron = state.sessionsHideCron ?? true;
   const hiddenCronCount = hideCron
@@ -238,6 +261,15 @@ export function renderChatControls(state: AppViewState) {
   `;
   return html`
     <div class="chat-controls">
+      <button
+        class="btn btn--sm btn--icon"
+        ?disabled=${!state.connected}
+        @click=${() => void createNewChatWindow(state)}
+        title=${t("chat.newWindowTitle")}
+        aria-label=${t("chat.newWindowTitle")}
+      >
+        ${icons.plus}
+      </button>
       <button
         class="btn btn--sm btn--icon"
         ?disabled=${state.chatLoading || !state.connected}
@@ -425,6 +457,15 @@ export function renderChatMobileToggle(state: AppViewState) {
         }}
       >
         <div class="chat-controls">
+          <button
+            class="btn btn--sm"
+            ?disabled=${!state.connected}
+            @click=${() => void createNewChatWindow(state)}
+            title=${t("chat.newWindowTitle")}
+            aria-label=${t("chat.newWindowTitle")}
+          >
+            ${icons.plus} ${t("chat.newWindowLabel")}
+          </button>
           <label class="field chat-controls__session">
             <select
               .value=${state.sessionKey}

@@ -23,6 +23,15 @@ describe("stripTelegramInternalPrefixes", () => {
     expect(stripTelegramInternalPrefixes("telegram:group:-100123")).toBe("-100123");
   });
 
+  it("strips telegram+direct prefixes", () => {
+    expect(stripTelegramInternalPrefixes("telegram:direct:6156683738")).toBe("6156683738");
+  });
+
+  it("strips telegram+account+route prefixes", () => {
+    expect(stripTelegramInternalPrefixes("telegram:atlas:direct:6156683738")).toBe("6156683738");
+    expect(stripTelegramInternalPrefixes("telegram:atlas:group:-100123")).toBe("-100123");
+  });
+
   it("does not strip group prefix without telegram prefix", () => {
     expect(stripTelegramInternalPrefixes("group:-100123")).toBe("group:-100123");
   });
@@ -85,6 +94,17 @@ describe("parseTelegramTarget", () => {
       chatType: "group",
     });
   });
+
+  it("parses direct targets with internal route prefixes", () => {
+    expect(parseTelegramTarget("telegram:direct:6156683738")).toEqual({
+      chatId: "6156683738",
+      chatType: "direct",
+    });
+    expect(parseTelegramTarget("telegram:atlas:direct:6156683738")).toEqual({
+      chatId: "6156683738",
+      chatType: "direct",
+    });
+  });
 });
 
 describe("normalizeTelegramChatId", () => {
@@ -98,6 +118,8 @@ describe("normalizeTelegramChatId", () => {
   it("keeps numeric chat ids unchanged", () => {
     expect(normalizeTelegramChatId("-1001234567890")).toBe("-1001234567890");
     expect(normalizeTelegramChatId("123456789")).toBe("123456789");
+    expect(normalizeTelegramChatId("telegram:direct:123456789")).toBe("123456789");
+    expect(normalizeTelegramChatId("telegram:atlas:direct:123456789")).toBe("123456789");
   });
 
   it("returns undefined for empty input", () => {

@@ -1,13 +1,14 @@
 ---
 name: session-memory
-description: "Save session context to memory when /new or /reset command is issued"
+description: "Save session snapshots on /new,/reset and append internal chat turns to memory"
 homepage: https://docs.openclaw.ai/automation/hooks#session-memory
 metadata:
   {
     "openclaw":
       {
         "emoji": "💾",
-        "events": ["command:new", "command:reset"],
+        "events":
+          ["command:new", "command:reset", "message:received", "message:sent"],
         "requires": { "config": ["workspace.dir"] },
         "install": [{ "id": "bundled", "kind": "bundled", "label": "Bundled with OpenClaw" }],
       },
@@ -16,7 +17,7 @@ metadata:
 
 # Session Memory Hook
 
-Automatically saves session context to your workspace memory when you issue `/new` or `/reset`.
+Automatically saves session context to your workspace memory when you issue `/new` or `/reset`, and appends each internal chat turn as running memory notes.
 
 ## What It Does
 
@@ -26,6 +27,10 @@ When you run `/new` or `/reset` to start a fresh session:
 2. **Extracts conversation** - Reads the last N user/assistant messages from the session (default: 15, configurable)
 3. **Generates descriptive slug** - Uses LLM to create a meaningful filename slug based on conversation content
 4. **Saves to memory** - Creates a new file at `<workspace>/memory/YYYY-MM-DD-slug.md`
+
+While you keep chatting in OpenClaw chat (internal channel), each turn is appended to:
+
+- `<workspace>/memory/YYYY-MM-DD-chat-memory.md`
 
 ## Output Format
 

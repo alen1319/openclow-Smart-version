@@ -157,6 +157,8 @@ export const zh_CN: TranslationMap = {
   },
   chat: {
     disconnected: "已断开与网关的连接。",
+    newWindowTitle: "创建新聊天窗口",
+    newWindowLabel: "新聊天",
     refreshTitle: "刷新聊天数据",
     thinkingToggle: "切换助手思考/工作输出",
     focusToggle: "切换专注模式 (隐藏侧边栏 + 页面页眉)",

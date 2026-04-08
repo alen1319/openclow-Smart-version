@@ -1,8 +1,8 @@
 /**
  * Session memory hook handler
  *
- * Saves session context to memory when /new or /reset command is triggered
- * Creates a new dated memory file with LLM-generated slug
+ * Saves session context to memory when /new or /reset is triggered,
+ * and appends internal chat turns into daily memory notes.
  */
 
 import fs from "node:fs/promises";
@@ -14,19 +14,32 @@ import {
 } from "../../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../../config/config.js";
 import { resolveStateDir } from "../../../config/paths.js";
-import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
+import { appendFileWithinRoot, writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import {
   parseAgentSessionKey,
   resolveAgentIdFromSessionKey,
   toAgentStoreSessionKey,
 } from "../../../routing/session-key.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../../../utils/message-channel.js";
 import { resolveHookConfig } from "../../config.js";
 import type { HookHandler } from "../../hooks.js";
 import { generateSlugViaLLM } from "../../llm-slug-generator.js";
 import { findPreviousSessionFile, getRecentSessionContentWithResetFallback } from "./transcript.js";
 
 const log = createSubsystemLogger("hooks/session-memory");
+const MAX_TURN_MEMORY_CHARS = 4000;
+
+function normalizeMessageTurnContent(value: string): string {
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= MAX_TURN_MEMORY_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, MAX_TURN_MEMORY_CHARS)}\n...[truncated]`;
+}
 
 function resolveDisplaySessionKey(params: {
   cfg?: OpenClawConfig;
@@ -47,13 +60,114 @@ function resolveDisplaySessionKey(params: {
   });
 }
 
+async function appendMessageTurnMemory(event: Parameters<HookHandler>[0]): Promise<void> {
+  const context = event.context || {};
+  const channelId =
+    typeof context.channelId === "string" ? context.channelId.trim().toLowerCase() : "";
+  if (channelId !== INTERNAL_MESSAGE_CHANNEL) {
+    return;
+  }
+
+  const isSentEvent = event.action === "sent";
+  if (isSentEvent && context.success !== true) {
+    return;
+  }
+  const source = typeof context.source === "string" ? context.source.trim() : null;
+  if (source === "gateway.chat.send" && context.gatewayMemoryPersisted === true) {
+    return;
+  }
+
+  const rawContent = typeof context.content === "string" ? context.content : "";
+  const content = normalizeMessageTurnContent(rawContent);
+  if (!content) {
+    return;
+  }
+  if (!isSentEvent && content.startsWith("/")) {
+    return;
+  }
+
+  const cfg = context.cfg as OpenClawConfig | undefined;
+  const contextWorkspaceDir =
+    typeof context.workspaceDir === "string" && context.workspaceDir.trim().length > 0
+      ? context.workspaceDir
+      : undefined;
+  const agentId = resolveAgentIdFromSessionKey(event.sessionKey);
+  const workspaceDir =
+    contextWorkspaceDir ||
+    (cfg
+      ? resolveAgentWorkspaceDir(cfg, agentId)
+      : path.join(resolveStateDir(process.env, os.homedir), "workspace"));
+  const displaySessionKey = resolveDisplaySessionKey({
+    cfg,
+    workspaceDir: contextWorkspaceDir,
+    sessionKey: event.sessionKey,
+  });
+  const memoryDir = path.join(workspaceDir, "memory");
+  await fs.mkdir(memoryDir, { recursive: true });
+
+  const now = new Date(event.timestamp);
+  const dateStr = now.toISOString().split("T")[0];
+  const timeStr = now.toISOString().split("T")[1].split(".")[0];
+  const role = isSentEvent ? "assistant" : "user";
+  const eventName = isSentEvent ? "message:sent" : "message:received";
+  const messageId =
+    typeof context.messageId === "string" && context.messageId.trim().length > 0
+      ? context.messageId.trim()
+      : null;
+  const from =
+    typeof context.from === "string" && context.from.trim().length > 0 ? context.from.trim() : null;
+  const to =
+    typeof context.to === "string" && context.to.trim().length > 0 ? context.to.trim() : null;
+
+  const entry = [
+    `## ${timeStr} UTC · ${role}`,
+    "",
+    `- **Session Key**: ${displaySessionKey}`,
+    `- **Event**: ${eventName}`,
+    `- **Channel**: ${INTERNAL_MESSAGE_CHANNEL}`,
+    ...(messageId ? [`- **Message ID**: ${messageId}`] : []),
+    ...(!isSentEvent && from ? [`- **From**: ${from}`] : []),
+    ...(isSentEvent && to ? [`- **To**: ${to}`] : []),
+    "",
+    `${role}: ${content}`,
+    "",
+  ].join("\n");
+
+  await appendFileWithinRoot({
+    rootDir: memoryDir,
+    relativePath: `${dateStr}-chat-memory.md`,
+    data: entry,
+    encoding: "utf-8",
+    mkdir: true,
+    prependNewlineIfNeeded: true,
+  });
+}
+
 /**
- * Save session context to memory when /new or /reset command is triggered
+ * Save memory snapshots for reset commands and internal chat turns.
  */
 const saveSessionToMemory: HookHandler = async (event) => {
-  // Only trigger on reset/new commands
-  const isResetCommand = event.action === "new" || event.action === "reset";
-  if (event.type !== "command" || !isResetCommand) {
+  const isResetCommand =
+    event.type === "command" && (event.action === "new" || event.action === "reset");
+  const isMessageTurnEvent =
+    event.type === "message" && (event.action === "received" || event.action === "sent");
+  if (!isResetCommand && !isMessageTurnEvent) {
+    return;
+  }
+  if (isMessageTurnEvent) {
+    try {
+      await appendMessageTurnMemory(event);
+    } catch (err) {
+      if (err instanceof Error) {
+        log.error("Failed to append chat memory turn", {
+          errorName: err.name,
+          errorMessage: err.message,
+          stack: err.stack,
+        });
+      } else {
+        log.error("Failed to append chat memory turn", { error: String(err) });
+      }
+    }
     return;
   }
 

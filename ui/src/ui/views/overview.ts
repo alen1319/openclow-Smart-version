@@ -8,11 +8,15 @@ import { icons } from "../icons.ts";
 import type { UiSettings } from "../storage.ts";
 import type {
   AttentionItem,
+  ChannelsStatusSnapshot,
   CronJob,
   CronStatus,
+  HealthSummary,
+  RuntimeMeta,
   SessionsListResult,
   SessionsUsageResult,
   SkillStatusReport,
+  StatusSummary,
 } from "../types.ts";
 import { renderConnectCommand } from "./connect-command.ts";
 import { renderOverviewAttention } from "./overview-attention.ts";
@@ -43,6 +47,11 @@ export type OverviewProps = {
   skillsReport: SkillStatusReport | null;
   cronJobs: CronJob[];
   cronStatus: CronStatus | null;
+  channelsSnapshot: ChannelsStatusSnapshot | null;
+  channelsError: string | null;
+  debugStatus: StatusSummary | null;
+  debugHealth: HealthSummary | null;
+  runtimeMeta: RuntimeMeta | null;
   attentionItems: AttentionItem[];
   eventLog: EventLogEntry[];
   overviewLogLines: string[];
@@ -59,6 +68,155 @@ export type OverviewProps = {
   onRefreshLogs: () => void;
 };
 
+type ApprovalInsight = {
+  ts: number;
+  kind: "exec" | "plugin";
+  command: string;
+  host: string | null;
+  agentId: string | null;
+  sessionKey: string | null;
+  routeSubject: string | null;
+  decision: string | null;
+  resolvedBy: string | null;
+  ask: string | null;
+  security: string | null;
+  highRisk: boolean;
+  reason: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function asBoolean(value: unknown): boolean | null {
+  if (typeof value !== "boolean") {
+    return null;
+  }
+  return value;
+}
+
+function formatRelativeOrNa(value: number | null): string {
+  return value != null ? formatRelativeTimestamp(value) : t("common.na");
+}
+
+function readStatusRuntimeVersion(status: StatusSummary | null): string | null {
+  return asString(asRecord(status)?.runtimeVersion);
+}
+
+function readCodexRuntimeSummary(status: StatusSummary | null): {
+  available: boolean;
+  sessions: number | null;
+  lastActiveAt: number | null;
+  acpRuns: number | null;
+} {
+  const statusRecord = asRecord(status);
+  const sessions = asRecord(statusRecord?.sessions);
+  const byAgent = Array.isArray(sessions?.byAgent) ? sessions.byAgent : [];
+  const codexAgent = byAgent
+    .map((entry) => asRecord(entry))
+    .find((entry) => asString(entry?.agentId) === "codex");
+  const heartbeatAgents = asRecord(statusRecord?.heartbeat);
+  const hasCodexHeartbeat = Array.isArray(heartbeatAgents?.agents)
+    ? heartbeatAgents.agents
+        .map((entry) => asRecord(entry))
+        .some((entry) => asString(entry?.agentId) === "codex")
+    : false;
+  const recent = Array.isArray(codexAgent?.recent) ? codexAgent.recent : [];
+  const firstRecent = asRecord(recent[0]);
+  const tasks = asRecord(statusRecord?.tasks);
+  const byRuntime = asRecord(tasks?.byRuntime);
+  return {
+    available: Boolean(codexAgent) || hasCodexHeartbeat,
+    sessions: asNumber(codexAgent?.count),
+    lastActiveAt: asNumber(firstRecent?.updatedAt),
+    acpRuns: asNumber(byRuntime?.acp),
+  };
+}
+
+function classifyApprovalRisk(command: string, security: string | null): boolean {
+  if (security && /high|critical|danger/i.test(security)) {
+    return true;
+  }
+  return /\b(rm\s+-rf|sudo\b|git\s+reset\s+--hard|mkfs\b|dd\s+if=|shutdown\b|reboot\b)/i.test(
+    command,
+  );
+}
+
+function resolveApprovalReason(params: { decision: string | null; ask: string | null }): string {
+  if (params.decision === "deny") {
+    return "Denied by approver decision.";
+  }
+  if (params.decision === "allow-once") {
+    return "Allowed once by operator approval.";
+  }
+  if (params.decision === "allow-always") {
+    return "Allowed persistently by operator approval.";
+  }
+  if (params.ask === "always") {
+    return "Pending: policy requires explicit approval for each action.";
+  }
+  return "Pending operator decision.";
+}
+
+function parseApprovalInsight(events: EventLogEntry[]): ApprovalInsight | null {
+  for (const entry of events) {
+    const isExec =
+      entry.event === "exec.approval.requested" || entry.event === "exec.approval.resolved";
+    const isPlugin =
+      entry.event === "plugin.approval.requested" || entry.event === "plugin.approval.resolved";
+    if (!isExec && !isPlugin) {
+      continue;
+    }
+    const payload = asRecord(entry.payload);
+    const request = asRecord(payload?.request);
+    const command =
+      asString(request?.command) ?? asString(request?.title) ?? asString(payload?.id) ?? "unknown";
+    const routeParts = [
+      asString(request?.turnSourceChannel),
+      asString(request?.turnSourceAccountId),
+      asString(request?.turnSourceTo),
+      asString(request?.turnSourceThreadId),
+    ].filter((value): value is string => Boolean(value));
+    const ask = asString(request?.ask);
+    const security = asString(request?.security);
+    const decision = asString(payload?.decision);
+    return {
+      ts: entry.ts,
+      kind: isPlugin ? "plugin" : "exec",
+      command,
+      host: asString(request?.host),
+      agentId: asString(request?.agentId),
+      sessionKey: asString(request?.sessionKey),
+      routeSubject: routeParts.length > 0 ? routeParts.join(" · ") : null,
+      decision,
+      resolvedBy: asString(payload?.resolvedBy),
+      ask,
+      security,
+      highRisk: classifyApprovalRisk(command, security),
+      reason: resolveApprovalReason({ decision, ask }),
+    };
+  }
+  return null;
+}
+
 export function renderOverview(props: OverviewProps) {
   const snapshot = props.hello?.snapshot as
     | {
@@ -73,6 +231,59 @@ export function renderOverview(props: OverviewProps) {
     : t("common.na");
   const authMode = snapshot?.authMode;
   const isTrustedProxy = authMode === "trusted-proxy";
+  const statusRuntimeVersion = readStatusRuntimeVersion(props.debugStatus);
+  const runtimeVersion =
+    props.runtimeMeta?.runtimeVersion ?? statusRuntimeVersion ?? props.hello?.server?.version ?? t("common.na");
+  const runtimeCommit = props.runtimeMeta?.commit ?? t("common.na");
+  const runtimeRef =
+    [props.runtimeMeta?.branch, props.runtimeMeta?.tag].filter((value): value is string => Boolean(value)).join(" · ") ||
+    t("common.na");
+  const runtimePid =
+    props.runtimeMeta?.pid != null ? String(props.runtimeMeta.pid) : t("common.na");
+  const runtimeEntry = props.runtimeMeta?.entryPath ?? t("common.na");
+  const runtimeRoot = props.runtimeMeta?.packageRoot ?? t("common.na");
+  const runtimeSource = props.runtimeMeta?.sourceLabel ?? "unknown runtime source";
+
+  const channels = props.channelsSnapshot?.channels ?? {};
+  const telegram = asRecord(channels.telegram);
+  const telegramAccounts = props.channelsSnapshot?.channelAccounts?.telegram ?? [];
+  const telegramAccount = asRecord(telegramAccounts[0]);
+  const telegramConfigured =
+    asBoolean(telegramAccount?.configured) ??
+    asBoolean(telegram?.configured) ??
+    false;
+  const telegramRunning = asBoolean(telegramAccount?.running) ?? asBoolean(telegram?.running) ?? false;
+  const telegramLastInboundAt = asNumber(telegramAccount?.lastInboundAt);
+  const telegramLastOutboundAt = asNumber(telegramAccount?.lastOutboundAt);
+  const healthChannels = asRecord(props.debugHealth)?.channels;
+  const healthTelegram = asRecord(asRecord(healthChannels)?.telegram);
+  const telegramProbe = asRecord(healthTelegram?.probe);
+  const telegramProbeOk = asBoolean(telegramProbe?.ok);
+  const telegramLabel = !telegramConfigured
+    ? "OFF"
+    : telegramRunning && telegramProbeOk !== false
+      ? "ON / OK"
+      : telegramRunning
+        ? "ON / WARN"
+        : "OFF / IDLE";
+  const telegramLastError = asString(telegramAccount?.lastError) ?? asString(telegram?.lastError);
+
+  const gatewayHealthOk = asBoolean(asRecord(props.debugHealth)?.ok) ?? false;
+  const gatewayLabel = props.connected
+    ? gatewayHealthOk
+      ? "CONNECTED / HEALTHY"
+      : "CONNECTED / DEGRADED"
+    : "DISCONNECTED";
+  const gatewayProbeLabel = props.lastError ? `probe error: ${props.lastError}` : "probe: ok";
+
+  const codexSummary = readCodexRuntimeSummary(props.debugStatus);
+  const codexLabel = codexSummary.available
+    ? codexSummary.lastActiveAt
+      ? "AVAILABLE / ACTIVE"
+      : "AVAILABLE / IDLE"
+    : "NOT DETECTED";
+
+  const approvalInsight = parseApprovalInsight(props.eventLog);
 
   const pairingHint = (() => {
     if (!shouldShowPairingHint(props.connected, props.lastError, props.lastErrorCode)) {
@@ -197,6 +408,37 @@ export function renderOverview(props: OverviewProps) {
 
   return html`
     <section class="grid">
+      <div class="card ov-runtime-card">
+        <div class="card-title">Enhanced Runtime Baseline</div>
+        <div class="card-sub">
+          Confirm this is the enhanced runtime candidate, not a default package instance.
+        </div>
+        <div class="ov-runtime-grid" style="margin-top: 16px;">
+          <div class="stat">
+            <div class="stat-label">Running version</div>
+            <div class="stat-value">${runtimeVersion}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Runtime source</div>
+            <div class="stat-value">${runtimeSource}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Commit / ref</div>
+            <div class="stat-value">${runtimeCommit} · ${runtimeRef}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Gateway PID</div>
+            <div class="stat-value">${runtimePid}</div>
+          </div>
+        </div>
+        <div class="ov-runtime-paths">
+          <div class="muted">Entry path</div>
+          <code class="mono">${runtimeEntry}</code>
+          <div class="muted">Package root</div>
+          <code class="mono">${runtimeRoot}</code>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title">${t("overview.access.title")}</div>
         <div class="card-sub">${t("overview.access.subtitle")}</div>
@@ -381,6 +623,106 @@ export function renderOverview(props: OverviewProps) {
           : html`
               <div class="callout" style="margin-top: 14px">
                 ${t("overview.snapshot.channelsHint")}
+              </div>
+            `}
+      </div>
+    </section>
+
+    <div class="ov-section-divider"></div>
+
+    <section class="grid">
+      <div class="card ov-remote-card">
+        <div class="card-title">Remote Runtime Status</div>
+        <div class="card-sub">Telegram / Gateway / Codex runtime signals from live gateway state.</div>
+        <div class="ov-remote-grid">
+          <div class="ov-remote-item">
+            <div class="ov-remote-name">Telegram</div>
+            <div class="ov-remote-status ${telegramLabel.includes("OK") ? "ok" : "warn"}">
+              ${telegramLabel}
+            </div>
+            <div class="ov-remote-meta">Inbound: ${formatRelativeOrNa(telegramLastInboundAt)}</div>
+            <div class="ov-remote-meta">Outbound: ${formatRelativeOrNa(telegramLastOutboundAt)}</div>
+            <div class="ov-remote-meta">
+              ${telegramLastError ? `Last error: ${telegramLastError}` : "Last callback: n/a"}
+            </div>
+          </div>
+
+          <div class="ov-remote-item">
+            <div class="ov-remote-name">Gateway</div>
+            <div class="ov-remote-status ${gatewayLabel.includes("HEALTHY") ? "ok" : "warn"}">
+              ${gatewayLabel}
+            </div>
+            <div class="ov-remote-meta">${gatewayProbeLabel}</div>
+            <div class="ov-remote-meta">Listen: ${props.settings.gatewayUrl || t("common.na")}</div>
+            <div class="ov-remote-meta">PID: ${runtimePid}</div>
+          </div>
+
+          <div class="ov-remote-item">
+            <div class="ov-remote-name">Codex / Pro</div>
+            <div class="ov-remote-status ${codexSummary.available ? "ok" : "warn"}">
+              ${codexLabel}
+            </div>
+            <div class="ov-remote-meta">
+              Last call: ${formatRelativeOrNa(codexSummary.lastActiveAt)}
+            </div>
+            <div class="ov-remote-meta">
+              Sessions: ${codexSummary.sessions != null ? codexSummary.sessions : t("common.na")}
+            </div>
+            <div class="ov-remote-meta">
+              ACP runtime tasks: ${codexSummary.acpRuns != null ? codexSummary.acpRuns : t("common.na")}
+            </div>
+          </div>
+        </div>
+        ${props.channelsError
+          ? html`<div class="callout danger" style="margin-top: 12px">${props.channelsError}</div>`
+          : nothing}
+      </div>
+    </section>
+
+    <div class="ov-section-divider"></div>
+
+    <section class="grid">
+      <div class="card ov-auth-card">
+        <div class="card-title">Authorization / Approval Insight</div>
+        <div class="card-sub">
+          Most recent sensitive action route, execution subject, and allow/deny rationale.
+        </div>
+        ${approvalInsight
+          ? html`
+              <div class="ov-auth-grid">
+                <div class="stat">
+                  <div class="stat-label">Initiator subject</div>
+                  <div class="stat-value">${approvalInsight.routeSubject ?? approvalInsight.sessionKey ?? "n/a"}</div>
+                </div>
+                <div class="stat">
+                  <div class="stat-label">Execution subject</div>
+                  <div class="stat-value">
+                    ${(approvalInsight.host ?? "gateway") + " · " + (approvalInsight.agentId ?? "main")}
+                  </div>
+                </div>
+                <div class="stat">
+                  <div class="stat-label">Decision</div>
+                  <div class="stat-value ${approvalInsight.decision === "deny" ? "warn" : "ok"}">
+                    ${approvalInsight.decision ?? "pending"}
+                  </div>
+                </div>
+                <div class="stat">
+                  <div class="stat-label">Resolved by</div>
+                  <div class="stat-value">${approvalInsight.resolvedBy ?? "pending"}</div>
+                </div>
+              </div>
+              <div class="ov-auth-detail">
+                <div><span class="muted">Action:</span> <code class="mono">${approvalInsight.command}</code></div>
+                <div><span class="muted">Policy:</span> ask=${approvalInsight.ask ?? "default"} · security=${approvalInsight.security ?? "n/a"}</div>
+                <div><span class="muted">Risk gate:</span> ${approvalInsight.highRisk ? "high-risk restriction matched" : "no high-risk restriction match"}</div>
+                <div><span class="muted">Why:</span> ${approvalInsight.reason}</div>
+                <div><span class="muted">When:</span> ${formatRelativeTimestamp(approvalInsight.ts)}</div>
+              </div>
+            `
+          : html`
+              <div class="callout" style="margin-top: 14px">
+                No recent approval events in the live event buffer. Current auth role:
+                <code class="mono">${props.hello?.auth?.role ?? "operator"}</code>.
               </div>
             `}
       </div>

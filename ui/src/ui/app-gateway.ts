@@ -230,6 +230,7 @@ export function connectGateway(host: GatewayHost, options?: ConnectGatewayOption
       host.lastError = null;
       host.lastErrorCode = null;
       host.hello = hello;
+      host.serverVersion = hello.server?.version?.trim() || null;
       applySnapshot(host, hello);
       // Reset orphaned chat run state from before disconnect.
       // Any in-flight run's final event was lost during the disconnect window.

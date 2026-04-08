@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
-import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { rewriteTranscriptEntriesInSessionFile } from "../../agents/pi-embedded-runner/transcript-rewrite.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
@@ -10,7 +10,10 @@ import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.j
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
+import type { OpenClawConfig } from "../../config/config.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
+import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
+import { appendFileWithinRoot } from "../../infra/fs-safe.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";
 import { type SavedMedia, saveMediaBuffer } from "../../media/store.js";
@@ -163,6 +166,64 @@ type SideResultPayload = {
   isError?: boolean;
   ts: number;
 };
+
+const MAX_WEBCHAT_MEMORY_TURN_CHARS = 4000;
+
+function normalizeWebchatMemoryTurnContent(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= MAX_WEBCHAT_MEMORY_TURN_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, MAX_WEBCHAT_MEMORY_TURN_CHARS)}\n...[truncated]`;
+}
+
+async function appendWebchatTurnMemory(params: {
+  cfg: OpenClawConfig;
+  sessionKey: string;
+  role: "user" | "assistant";
+  content: string;
+  messageId?: string;
+}): Promise<boolean> {
+  const normalizedContent = normalizeWebchatMemoryTurnContent(params.content);
+  if (!normalizedContent) {
+    return false;
+  }
+  if (params.role === "user" && normalizedContent.startsWith("/")) {
+    return false;
+  }
+  const agentId = resolveSessionAgentId({
+    sessionKey: params.sessionKey,
+    config: params.cfg,
+  });
+  const workspaceDir = resolveAgentWorkspaceDir(params.cfg, agentId);
+  const memoryDir = path.join(workspaceDir, "memory");
+  const now = new Date();
+  const dateStr = now.toISOString().split("T")[0];
+  const timeStr = now.toISOString().split("T")[1].split(".")[0];
+  const entry = [
+    `## ${timeStr} UTC · ${params.role}`,
+    "",
+    `- **Session Key**: ${params.sessionKey}`,
+    `- **Source**: gateway.chat.send`,
+    `- **Channel**: ${INTERNAL_MESSAGE_CHANNEL}`,
+    ...(params.messageId ? [`- **Message ID**: ${params.messageId}`] : []),
+    "",
+    `${params.role}: ${normalizedContent}`,
+    "",
+  ].join("\n");
+  await appendFileWithinRoot({
+    rootDir: memoryDir,
+    relativePath: `${dateStr}-chat-memory.md`,
+    data: entry,
+    encoding: "utf-8",
+    mkdir: true,
+    prependNewlineIfNeeded: true,
+  });
+  return true;
+}
 
 function resolveChatSendOriginatingRoute(params: {
   client?: { mode?: string | null; id?: string | null } | null;
@@ -911,6 +972,131 @@ function appendAssistantTranscriptMessage(params: {
   });
 }
 
+function extractTranscriptMessageTextForHook(message: Record<string, unknown>): string | null {
+  const content = message.content;
+  if (typeof content === "string") {
+    const cleaned = stripInlineDirectiveTagsForDisplay(content).text.trim();
+    return cleaned || null;
+  }
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return "";
+        }
+        const text = (entry as { text?: unknown }).text;
+        if (typeof text !== "string") {
+          return "";
+        }
+        return stripInlineDirectiveTagsForDisplay(text).text.trim();
+      })
+      .filter((part) => part.length > 0);
+    if (parts.length > 0) {
+      return parts.join("\n");
+    }
+  }
+  const fallbackText = message.text;
+  if (typeof fallbackText === "string") {
+    const cleaned = stripInlineDirectiveTagsForDisplay(fallbackText).text.trim();
+    return cleaned || null;
+  }
+  return null;
+}
+
+function emitInternalAssistantMessageSentHook(params: {
+  context: Pick<GatewayRequestContext, "logGateway">;
+  cfg: OpenClawConfig;
+  sessionKey: string;
+  runId: string;
+}) {
+  const { entry, storePath } = loadSessionEntry(params.sessionKey);
+  if (!entry?.sessionId) {
+    return;
+  }
+  const expectedAssistantIdempotencyKey = `${params.runId}:assistant`;
+  const messages = readSessionMessages(entry.sessionId, storePath, entry.sessionFile);
+  let fallbackAssistantMessage: Record<string, unknown> | null = null;
+  let targetAssistantMessage: Record<string, unknown> | null = null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || typeof message !== "object") {
+      continue;
+    }
+    const role = (message as { role?: unknown }).role;
+    if (typeof role !== "string" || role.trim().toLowerCase() !== "assistant") {
+      continue;
+    }
+    const record = message as Record<string, unknown>;
+    if (!fallbackAssistantMessage) {
+      fallbackAssistantMessage = record;
+    }
+    const idempotencyKeyRaw = (record as { idempotencyKey?: unknown }).idempotencyKey;
+    const idempotencyKey =
+      typeof idempotencyKeyRaw === "string" && idempotencyKeyRaw.trim().length > 0
+        ? idempotencyKeyRaw.trim()
+        : null;
+    if (idempotencyKey === expectedAssistantIdempotencyKey) {
+      targetAssistantMessage = record;
+      break;
+    }
+  }
+  const selectedMessage = targetAssistantMessage ?? fallbackAssistantMessage;
+  if (!selectedMessage) {
+    return;
+  }
+  const content = extractTranscriptMessageTextForHook(selectedMessage);
+  if (!content) {
+    return;
+  }
+  const messageIdRaw = (selectedMessage as { id?: unknown }).id;
+  const messageId =
+    typeof messageIdRaw === "string" && messageIdRaw.trim().length > 0
+      ? messageIdRaw.trim()
+      : undefined;
+  const entryRecord = (entry as unknown as Record<string, unknown>) ?? {};
+  const toRaw = entryRecord.lastTo;
+  const accountIdRaw = entryRecord.lastAccountId;
+  const to = typeof toRaw === "string" && toRaw.trim().length > 0 ? toRaw.trim() : params.sessionKey;
+  const accountId =
+    typeof accountIdRaw === "string" && accountIdRaw.trim().length > 0
+      ? accountIdRaw.trim()
+      : undefined;
+  const emitHook = (gatewayMemoryPersisted: boolean) => {
+    void triggerInternalHook(
+      createInternalHookEvent("message", "sent", params.sessionKey, {
+        cfg: params.cfg,
+        to,
+        content,
+        success: true,
+        channelId: INTERNAL_MESSAGE_CHANNEL,
+        conversationId: params.sessionKey,
+        source: "gateway.chat.send",
+        gatewayMemoryPersisted,
+        ...(accountId ? { accountId } : {}),
+        ...(messageId ? { messageId } : {}),
+      }),
+    ).catch((err) => {
+      params.context.logGateway.warn(
+        `chat.send internal message:sent hook failed: ${formatForLog(err)}`,
+      );
+    });
+  };
+  void appendWebchatTurnMemory({
+    cfg: params.cfg,
+    sessionKey: params.sessionKey,
+    role: "assistant",
+    content,
+    ...(messageId ? { messageId } : {}),
+  })
+    .then((persisted) => {
+      emitHook(persisted);
+    })
+    .catch((err) => {
+      params.context.logGateway.warn(`chat.send assistant memory append failed: ${formatForLog(err)}`);
+      emitHook(false);
+    });
+}
+
 function collectSessionAbortPartials(params: {
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
   chatRunBuffers: Map<string, string>;
@@ -1613,6 +1799,15 @@ export const chatHandlers: GatewayRequestHandlers = {
       // Only BodyForAgent gets the timestamp — Body stays raw for UI display.
       // See: https://github.com/openclaw/openclaw/issues/3658
       const stampedMessage = injectTimestamp(messageForAgent, timestampOptsFromConfig(cfg));
+      void appendWebchatTurnMemory({
+        cfg,
+        sessionKey,
+        role: "user",
+        content: parsedMessage,
+        messageId: clientRunId,
+      }).catch((err) => {
+        context.logGateway.warn(`chat.send user memory append failed: ${formatForLog(err)}`);
+      });
 
       const ctx: MsgContext = {
         Body: messageForAgent,
@@ -1814,6 +2009,7 @@ export const chatHandlers: GatewayRequestHandlers = {
                   sessionFile: latestEntry?.sessionFile,
                   agentId,
                   createIfMissing: true,
+                  idempotencyKey: `${clientRunId}:assistant`,
                 });
                 if (appended.ok) {
                   message = appended.message;
@@ -1843,6 +2039,12 @@ export const chatHandlers: GatewayRequestHandlers = {
           } else {
             void emitUserTranscriptUpdate();
           }
+          emitInternalAssistantMessageSentHook({
+            context,
+            cfg,
+            sessionKey,
+            runId: clientRunId,
+          });
           setGatewayDedupeEntry({
             dedupe: context.dedupe,
             key: `chat:${clientRunId}`,

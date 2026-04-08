@@ -88,6 +88,7 @@ import type {
   LogLevel,
   ModelCatalogEntry,
   PresenceEntry,
+  RuntimeMeta,
   ChannelsStatusSnapshot,
   SessionsListResult,
   SkillStatusReport,
@@ -440,6 +441,7 @@ export class OpenClawApp extends LitElement {
   @state() debugLoading = false;
   @state() debugStatus: StatusSummary | null = null;
   @state() debugHealth: HealthSummary | null = null;
+  @state() debugRuntimeMeta: RuntimeMeta | null = null;
   @state() debugModels: ModelCatalogEntry[] = [];
   @state() debugHeartbeat: unknown = null;
   @state() debugCallMethod = "";
