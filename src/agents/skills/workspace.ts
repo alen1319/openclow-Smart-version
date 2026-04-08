@@ -436,7 +436,9 @@ function loadSkillEntries(
     dir: managedSkillsDir,
     source: "openclaw-managed",
   });
-  const personalAgentsSkillsDir = path.resolve(os.homedir(), ".agents", "skills");
+  // Use resolveUserPath so tests that override HOME (temp-home fixtures) remain isolated
+  // and local machine ~/.agents skills do not leak into deterministic test expectations.
+  const personalAgentsSkillsDir = resolveUserPath("~/.agents/skills");
   const personalAgentsSkills = loadSkills({
     dir: personalAgentsSkillsDir,
     source: "agents-skills-personal",
