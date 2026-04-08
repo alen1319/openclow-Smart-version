@@ -197,10 +197,6 @@ export function isOwnerOnlyToolName(name: string) {
   return resolveToolMinimumAuthorizationLevel(name) === "owner";
 }
 
-function isOwnerOnlyTool(tool: AnyAgentTool) {
-  return tool.ownerOnly === true || isOwnerOnlyToolName(tool.name);
-}
-
 export function applyToolAuthorizationPolicy(
   tools: AnyAgentTool[],
   authorizationLike?:

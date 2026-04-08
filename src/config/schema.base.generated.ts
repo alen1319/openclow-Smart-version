@@ -3090,12 +3090,17 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                     properties: {
                       primary: {
                         type: "string",
+                        title: "Video Generation Model",
+                        description:
+                          "Optional video-generation model (provider/model) used by the shared video generation capability.",
                       },
                       fallbacks: {
                         type: "array",
                         items: {
                           type: "string",
                         },
+                        title: "Video Generation Model Fallbacks",
+                        description: "Ordered fallback video-generation models (provider/model).",
                       },
                     },
                     additionalProperties: false,
@@ -26875,6 +26880,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       tags: ["advanced", "url-secret"],
     },
   },
-  version: "2026.4.4",
+  version: "2026.4.8",
   generatedAt: "2026-03-22T21:17:33.302Z",
 } as const satisfies BaseConfigSchemaResponse;
