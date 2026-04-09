@@ -1,5 +1,6 @@
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { resolveConversationLabel } from "../../channels/conversation-label.js";
+import { resolveAuthSubjectFromInboundContext } from "../../domain/identity/identity-resolver.js";
 import type { FinalizedMsgContext, MsgContext } from "../templating.js";
 import { normalizeInboundTextNewlines, sanitizeInboundSystemTags } from "./inbound-text.js";
 
@@ -25,6 +26,14 @@ function normalizeMediaType(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeIdentityField(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
 }
 
 function countMediaEntries(ctx: MsgContext): number {
@@ -93,6 +102,20 @@ export function finalizeInboundContext<T extends Record<string, unknown>>(
 
   // Always set. Default-deny when upstream forgets to populate it.
   normalized.CommandAuthorized = normalized.CommandAuthorized === true;
+
+  const explicitAuthorizationSubjectKey = normalizeIdentityField(
+    normalized.AuthorizationSubjectKey,
+  );
+  if (explicitAuthorizationSubjectKey) {
+    normalized.AuthorizationSubjectKey = explicitAuthorizationSubjectKey;
+  }
+
+  // Channel ingress identity convergence: map inbound sender context into a
+  // stable subject object before command/session routing layers read it.
+  const authSubject = resolveAuthSubjectFromInboundContext(normalized);
+  if (authSubject) {
+    normalized.AuthSubject = authSubject;
+  }
 
   // MediaType/MediaTypes alignment:
   // - No media: do not inject defaults.

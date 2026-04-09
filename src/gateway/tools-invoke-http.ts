@@ -1,7 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { runBeforeToolCallHook } from "../agents/pi-tools.before-tool-call.js";
 import { resolveToolLoopDetectionConfig } from "../agents/pi-tools.js";
-import { applyToolAuthorizationPolicy, resolveToolAuthorizationContext } from "../agents/tool-policy.js";
+import {
+  applyToolAuthorizationPolicy,
+  resolveToolAuthorizationContext,
+} from "../agents/tool-policy.js";
 import { ToolInputError } from "../agents/tools/common.js";
 import { loadConfig } from "../config/config.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
@@ -18,7 +21,7 @@ import {
 } from "./http-common.js";
 import {
   authorizeGatewayHttpRequestOrReply,
-  getHeader,
+  resolveHttpToolDeliveryContext,
   resolveHttpAuthorizationIdentity,
   resolveOpenAiCompatibleHttpOperatorScopes,
   resolveOpenAiCompatibleHttpSenderIsOwner,
@@ -221,13 +224,9 @@ export async function handleToolsInvokeHttpRequest(
   const sessionKey =
     !rawSessionKey || rawSessionKey === "main" ? resolveMainSessionKey(cfg) : rawSessionKey;
 
-  // Resolve message channel/account hints (optional headers) for policy inheritance.
-  const messageChannel = normalizeMessageChannel(
-    getHeader(req, "x-openclaw-message-channel") ?? "",
-  );
-  const accountId = getHeader(req, "x-openclaw-account-id")?.trim() || undefined;
-  const agentTo = getHeader(req, "x-openclaw-message-to")?.trim() || undefined;
-  const agentThreadId = getHeader(req, "x-openclaw-thread-id")?.trim() || undefined;
+  // Resolve message routing hints from HTTP headers via the shared parser.
+  const toolDeliveryContext = resolveHttpToolDeliveryContext(req);
+  const messageChannel = normalizeMessageChannel(toolDeliveryContext.messageChannel);
   const senderIsOwner = resolveOpenAiCompatibleHttpSenderIsOwner(req, requestAuth);
   const senderIsApprover = senderIsOwner || requestedScopes.includes(APPROVALS_SCOPE);
   const authorization = resolveToolAuthorizationContext({
@@ -243,9 +242,9 @@ export async function handleToolsInvokeHttpRequest(
     cfg,
     sessionKey,
     messageProvider: messageChannel ?? undefined,
-    accountId,
-    agentTo,
-    agentThreadId,
+    accountId: toolDeliveryContext.accountId,
+    agentTo: toolDeliveryContext.agentTo,
+    agentThreadId: toolDeliveryContext.agentThreadId,
     requesterSenderId: authorizationIdentity.requesterSenderId,
     authorizationSubjectKey: authorizationIdentity.authorizationSubjectKey,
     approverIdentityKey: authorizationIdentity.approverIdentityKey,

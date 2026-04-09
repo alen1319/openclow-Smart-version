@@ -7,9 +7,10 @@ import {
   parseModelRef,
   resolveDefaultModelForAgent,
 } from "../agents/model-selection.js";
+import { parseExplicitTargetForChannel } from "../channels/plugins/target-parsing.js";
 import { loadConfig } from "../config/config.js";
+import { resolveRequesterAuthorizationIdentity } from "../domain/auth/authorization-identity.js";
 import { buildAgentMainSessionKey, normalizeAgentId } from "../routing/session-key.js";
-import { resolveAuthorizationIdentity } from "../shared/authorization-identity.js";
 import { normalizeMessageChannel } from "../utils/message-channel.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import {
@@ -195,35 +196,106 @@ export type HttpAuthorizationIdentity = {
   approverIdentityKey?: string;
 };
 
+export type HttpToolDeliveryContext = {
+  messageChannel?: string;
+  accountId?: string;
+  agentTo?: string;
+  agentThreadId?: string | number;
+};
+
+function normalizeOptionalText(value?: string | null): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function normalizeOptionalThreadId(value?: string | number | null): string | number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.trunc(value) : undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
+}
+
+function parseKnownTargetFallback(params: {
+  channel?: string;
+  rawTo?: string;
+}): { to?: string; threadId?: string | number } | null {
+  const channel = params.channel?.trim().toLowerCase();
+  const rawTo = params.rawTo?.trim();
+  if (!channel || !rawTo) {
+    return null;
+  }
+  if (channel !== "telegram") {
+    return null;
+  }
+
+  const normalized = rawTo.replace(/^telegram:/i, "").trim();
+  const prefixedTopic = /^group:([^:]+):topic:(\d+)$/i.exec(normalized);
+  if (prefixedTopic) {
+    return {
+      to: prefixedTopic[1],
+      threadId: Number.parseInt(prefixedTopic[2], 10),
+    };
+  }
+  const topic = /^([^:]+):topic:(\d+)$/i.exec(normalized);
+  if (topic) {
+    return {
+      to: topic[1],
+      threadId: Number.parseInt(topic[2], 10),
+    };
+  }
+  const prefixedId = /^(group|channel|direct):(.+)$/i.exec(normalized);
+  if (prefixedId) {
+    return {
+      to: prefixedId[2].trim(),
+    };
+  }
+  return null;
+}
+
 function readOptionalIdentityHeader(req: IncomingMessage, name: string): string | undefined {
-  const value = getHeader(req, name)?.trim();
-  return value ? value : undefined;
+  return normalizeOptionalText(getHeader(req, name));
+}
+
+export function resolveHttpToolDeliveryContext(req: IncomingMessage): HttpToolDeliveryContext {
+  const messageChannel = normalizeMessageChannel(getHeader(req, "x-openclaw-message-channel"));
+  const accountId = normalizeOptionalText(getHeader(req, "x-openclaw-account-id"));
+  const rawTo = normalizeOptionalText(getHeader(req, "x-openclaw-message-to"));
+  const explicitThreadId = normalizeOptionalThreadId(getHeader(req, "x-openclaw-thread-id"));
+  const parsedTarget =
+    (messageChannel && rawTo ? parseExplicitTargetForChannel(messageChannel, rawTo) : null) ??
+    parseKnownTargetFallback({
+      channel: messageChannel ?? undefined,
+      rawTo,
+    });
+  const normalizedParsedTo = normalizeOptionalText(parsedTarget?.to);
+  const parsedThreadId = normalizeOptionalThreadId(parsedTarget?.threadId);
+
+  return {
+    messageChannel: messageChannel ?? undefined,
+    accountId,
+    agentTo: normalizedParsedTo ?? rawTo,
+    agentThreadId: explicitThreadId ?? parsedThreadId,
+  };
 }
 
 export function resolveHttpAuthorizationIdentity(params: {
   req: IncomingMessage;
   senderIsApprover?: boolean;
 }): HttpAuthorizationIdentity {
-  const requesterSenderId =
-    readOptionalIdentityHeader(params.req, "x-openclaw-requester-sender-id") ??
-    readOptionalIdentityHeader(params.req, "x-openclaw-sender-id");
-  const authorizationIdentity = resolveAuthorizationIdentity({
+  return resolveRequesterAuthorizationIdentity({
+    requesterSenderId: readOptionalIdentityHeader(params.req, "x-openclaw-requester-sender-id"),
+    senderId: readOptionalIdentityHeader(params.req, "x-openclaw-sender-id"),
     authorizationSubjectKey: readOptionalIdentityHeader(
       params.req,
       "x-openclaw-authorization-subject-key",
     ),
-    approverIdentityKey: readOptionalIdentityHeader(
-      params.req,
-      "x-openclaw-approver-identity-key",
-    ),
+    approverIdentityKey: readOptionalIdentityHeader(params.req, "x-openclaw-approver-identity-key"),
     senderIsApprover: params.senderIsApprover,
   });
-
-  return {
-    requesterSenderId,
-    authorizationSubjectKey: authorizationIdentity.authorizationSubjectKey,
-    approverIdentityKey: authorizationIdentity.approverIdentityKey,
-  };
 }
 
 export function resolveAgentIdFromHeader(req: IncomingMessage): string | undefined {

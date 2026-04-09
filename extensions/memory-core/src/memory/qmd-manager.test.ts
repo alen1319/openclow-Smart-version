@@ -419,6 +419,45 @@ describe("QmdMemoryManager", () => {
     await manager.close();
   });
 
+  it("disables qmd watcher when chokidar emits an error", async () => {
+    vi.useFakeTimers();
+    cfg = {
+      agents: {
+        defaults: {
+          workspace: workspaceDir,
+          memorySearch: {
+            provider: "openai",
+            model: "mock-embed",
+            store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
+            sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
+          },
+        },
+        list: [{ id: agentId, default: true, workspace: workspaceDir }],
+      },
+      memory: {
+        backend: "qmd",
+        qmd: {
+          includeDefaultMemory: false,
+          update: { interval: "0s", debounceMs: 0, onBoot: false },
+          paths: [{ path: workspaceDir, pattern: "**/*.md", name: "workspace" }],
+        },
+      },
+    } as OpenClawConfig;
+
+    const { manager } = await createManager({ mode: "full" });
+    expect(watchMock).toHaveBeenCalledTimes(1);
+    const watcher = watchMock.mock.results[0]?.value as EventEmitter & { close: Mock };
+    watcher.emit("error", new Error("EMFILE: too many open files, watch"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(watcher.close).toHaveBeenCalled();
+    expect(logWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("qmd watcher disabled after error"),
+    );
+
+    await manager.close();
+  });
+
   it("runs boot update in background by default", async () => {
     cfg = {
       ...cfg,

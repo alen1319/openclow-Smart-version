@@ -453,15 +453,19 @@ describe("embedding provider local fallback", () => {
     expect(result.fallbackReason).toContain("node-llama-cpp");
   });
 
-  it("throws a helpful error when local is requested and fallback is none", async () => {
+  it("degrades to FTS-only when local is requested and fallback is none", async () => {
     mockMissingLocalEmbeddingDependency();
-    await expect(createLocalProvider()).rejects.toThrow(/optional dependency node-llama-cpp/i);
+    const result = await createLocalProvider();
+    expect(result.provider).toBeNull();
+    expect(result.providerUnavailableReason).toContain("optional dependency node-llama-cpp");
   });
 
-  it("mentions every remote provider in local setup guidance", async () => {
+  it("includes local setup guidance in FTS-only degradation reason", async () => {
     mockMissingLocalEmbeddingDependency();
-    await expect(createLocalProvider()).rejects.toThrow(/provider = "gemini"/i);
-    await expect(createLocalProvider()).rejects.toThrow(/provider = "mistral"/i);
+    const result = await createLocalProvider();
+    expect(result.provider).toBeNull();
+    expect(result.providerUnavailableReason).toContain('provider = "gemini"');
+    expect(result.providerUnavailableReason).toContain('provider = "mistral"');
   });
 });
 

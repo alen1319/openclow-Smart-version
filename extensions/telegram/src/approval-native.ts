@@ -50,11 +50,17 @@ function resolveTurnSourceTelegramOriginTarget(
 
 function resolveSessionTelegramOriginTarget(sessionTarget: {
   to: string;
-  threadId?: number | null;
+  threadId?: string | number | null;
 }): TelegramOriginTarget {
+  const parsedThreadId =
+    typeof sessionTarget.threadId === "number"
+      ? sessionTarget.threadId
+      : typeof sessionTarget.threadId === "string"
+        ? Number.parseInt(sessionTarget.threadId, 10)
+        : undefined;
   return {
     to: normalizeTelegramChatId(sessionTarget.to) ?? sessionTarget.to,
-    threadId: sessionTarget.threadId ?? undefined,
+    threadId: Number.isFinite(parsedThreadId) ? parsedThreadId : undefined,
   };
 }
 

@@ -1,4 +1,5 @@
 import type { ChannelId } from "../channels/plugins/types.js";
+import type { AuthSubject } from "../domain/types/identity.js";
 import type {
   MediaUnderstandingDecision,
   MediaUnderstandingOutput,
@@ -138,6 +139,8 @@ export type MsgContext = {
   OwnerAllowFrom?: Array<string | number>;
   /** Stable authorization subject identifier derived from the sender, never the conversation id. */
   AuthorizationSubjectKey?: string;
+  /** Canonical auth identity resolved at channel ingress. */
+  AuthSubject?: AuthSubject;
   SenderName?: string;
   SenderId?: string;
   SenderUsername?: string;

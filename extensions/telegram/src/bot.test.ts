@@ -1,9 +1,9 @@
 import { rm } from "node:fs/promises";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import {
   clearPluginInteractiveHandlers,
   registerPluginInteractiveHandler,
 } from "openclaw/plugin-sdk/plugin-runtime";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { escapeRegExp, formatEnvelopeTimestamp } from "../../../test/helpers/envelope-timestamp.js";
 import type { TelegramInteractiveHandlerContext } from "./interactive-dispatch.js";
@@ -511,6 +511,68 @@ describe("createTelegramBot", () => {
     );
     expect(editMessageReplyMarkupSpy).toHaveBeenCalledTimes(1);
     expect(answerCallbackQuerySpy).toHaveBeenCalledWith("cbq-approve-topic-subject");
+  });
+
+  it("routes forum-topic deny approval callbacks with sender-scoped authorization identity", async () => {
+    onSpy.mockClear();
+    editMessageReplyMarkupSpy.mockClear();
+    resolveExecApprovalSpy.mockClear();
+
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          dmPolicy: "open",
+          allowFrom: ["*"],
+          groupPolicy: "open",
+          groups: { "*": { requireMention: false } },
+          execApprovals: {
+            enabled: true,
+            approvers: ["9"],
+            target: "channel",
+          },
+        },
+      },
+    });
+    createTelegramBot({ token: "tok" });
+    const callbackHandler = getOnHandler("callback_query") as (
+      ctx: Record<string, unknown>,
+    ) => Promise<void>;
+    expect(callbackHandler).toBeDefined();
+
+    await callbackHandler({
+      callbackQuery: {
+        id: "cbq-approve-topic-deny-subject",
+        data: "/approve 138e9b8c deny",
+        from: { id: 9, first_name: "Ada", username: "ada_bot" },
+        message: {
+          chat: { id: -100999, type: "supergroup", title: "Ops", is_forum: true },
+          message_thread_id: 42,
+          date: 1736380800,
+          message_id: 54,
+          text: "Approval required.",
+        },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(resolveExecApprovalSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approvalId: "138e9b8c",
+        decision: "deny",
+        senderId: "9",
+        accountId: "default",
+        authorizationSubjectKey: "telegram:default:sender:9",
+        approverIdentityKey: "telegram:default:sender:9",
+      }),
+    );
+    expect(resolveExecApprovalSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorizationSubjectKey: expect.stringContaining("-100999"),
+      }),
+    );
+    expect(editMessageReplyMarkupSpy).toHaveBeenCalledTimes(1);
+    expect(answerCallbackQuerySpy).toHaveBeenCalledWith("cbq-approve-topic-deny-subject");
   });
 
   it("resolves plugin approval callbacks through the shared approval resolver", async () => {

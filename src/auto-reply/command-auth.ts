@@ -1,11 +1,11 @@
+import { resolveToolAuthorizationContext } from "../agents/tool-policy.js";
+import type { ToolAuthorizationLevel } from "../agents/tools/common.js";
 import { getChannelPlugin, listChannelPlugins } from "../channels/plugins/index.js";
 import type { ChannelId, ChannelPlugin } from "../channels/plugins/types.js";
 import { normalizeAnyChannelId } from "../channels/registry.js";
-import { resolveToolAuthorizationContext } from "../agents/tool-policy.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveAuthorizationIdentity } from "../domain/auth/authorization-identity.js";
 import { normalizeStringEntries } from "../shared/string-normalization.js";
-import type { ToolAuthorizationLevel } from "../agents/tools/common.js";
-import { resolveAuthorizationIdentity } from "../shared/authorization-identity.js";
 import {
   INTERNAL_MESSAGE_CHANNEL,
   isInternalMessageChannel,
@@ -565,7 +565,7 @@ export function resolveCommandAuthorization(params: {
   const matchedCommandOwner = ownerCandidatesForCommands.length
     ? senderCandidates.find((candidate) => ownerCandidatesForCommands.includes(candidate))
     : undefined;
-  const senderId = matchedSender ?? senderCandidates[0];
+  const senderId = matchedSender ?? senderCandidates[0] ?? ctx.AuthSubject?.id;
 
   const enforceOwner = Boolean(plugin?.commands?.enforceOwnerForCommands);
   const senderIsOwnerByIdentity = Boolean(matchedSender);
@@ -618,7 +618,7 @@ export function resolveCommandAuthorization(params: {
     isAuthorizedSender,
   }).level;
   const authorizationIdentity = resolveAuthorizationIdentity({
-    authorizationSubjectKey: ctx.AuthorizationSubjectKey,
+    authorizationSubjectKey: ctx.AuthorizationSubjectKey ?? ctx.AuthSubject?.id,
     senderIsApprover,
   });
 

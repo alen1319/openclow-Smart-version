@@ -1,0 +1,87 @@
+import { describe, expect, it, vi } from "vitest";
+import type { AuthorizationSubject, TaskIntent } from "../../domain/auth/Subject.js";
+import { AuthorizationService } from "./AuthorizationService.js";
+
+const subject: AuthorizationSubject = {
+  uid: "tg:42",
+  platform: "telegram",
+  role: "user",
+  permissions: [],
+  metadata: {},
+};
+
+const baseIntent: TaskIntent = {
+  toolName: "exec",
+  params: { cmd: "echo hi" },
+  riskLevel: "high",
+  traceId: "trace-auth-1",
+};
+
+describe("AuthorizationService", () => {
+  it("short-circuits on static denial", async () => {
+    const policyEngine = {
+      check: vi.fn().mockResolvedValue({
+        isDenied: true,
+        requireManualApproval: false,
+      }),
+    };
+    const approvalBridge = {
+      wait: vi.fn(),
+    };
+    const service = new AuthorizationService(policyEngine, approvalBridge);
+
+    const result = await service.authorize(subject, baseIntent);
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data.approved).toBe(false);
+    expect(approvalBridge.wait).not.toHaveBeenCalled();
+  });
+
+  it("runs manual approval and caches by approval id", async () => {
+    const policyEngine = {
+      check: vi.fn().mockResolvedValue({
+        isDenied: false,
+        requireManualApproval: true,
+      }),
+    };
+    const approvalBridge = {
+      wait: vi.fn().mockResolvedValue({
+        approved: true,
+        reason: "approved by ops",
+        approverId: "ops-1",
+        approvalId: "approval:manual",
+      }),
+    };
+    const service = new AuthorizationService(policyEngine, approvalBridge);
+
+    const intent: TaskIntent = {
+      ...baseIntent,
+      approvalId: "approval:manual",
+    };
+    const first = await service.authorize(subject, intent);
+    const second = await service.authorize(subject, intent);
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(approvalBridge.wait).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns failure when policy engine throws", async () => {
+    const policyEngine = {
+      check: vi.fn().mockRejectedValue(new Error("boom")),
+    };
+    const approvalBridge = {
+      wait: vi.fn(),
+    };
+    const service = new AuthorizationService(policyEngine, approvalBridge);
+
+    const result = await service.authorize(subject, baseIntent);
+    expect(result.success).toBe(false);
+    if (result.success) {
+      return;
+    }
+    expect(result.error.message).toContain("Policy check failed");
+  });
+});

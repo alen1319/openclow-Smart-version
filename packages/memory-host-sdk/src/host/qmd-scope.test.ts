@@ -61,16 +61,9 @@ describe("qmd scope", () => {
     expect(
       resolveQmdScopeSessionCandidates({
         sessionKey: " agent:main:telegram:group:-100123:topic:77 ",
-        sessionKeys: [
-          "agent:main:telegram:group:-100123",
-          "agent:main:telegram:group:-100123",
-          "",
-        ],
+        sessionKeys: ["agent:main:telegram:group:-100123", "agent:main:telegram:group:-100123", ""],
       }),
-    ).toEqual([
-      "agent:main:telegram:group:-100123:topic:77",
-      "agent:main:telegram:group:-100123",
-    ]);
+    ).toEqual(["agent:main:telegram:group:-100123:topic:77", "agent:main:telegram:group:-100123"]);
   });
 
   it("deduplicates case-variant session candidates while preserving first-hit order", () => {
@@ -83,10 +76,7 @@ describe("qmd scope", () => {
           "agent:main:telegram:group:-100123",
         ],
       }),
-    ).toEqual([
-      "Agent:Main:Telegram:Group:-100123:Topic:77",
-      "AGENT:MAIN:TELEGRAM:GROUP:-100123",
-    ]);
+    ).toEqual(["Agent:Main:Telegram:Group:-100123:Topic:77", "AGENT:MAIN:TELEGRAM:GROUP:-100123"]);
   });
 
   it("keeps first-hit ordering stable across deep topic/group conflict histories", () => {
@@ -108,6 +98,27 @@ describe("qmd scope", () => {
       "agent:main:telegram:group:-100111",
       "agent:main:telegram:group:-100111:topic:77",
       "agent:main:telegram:group:-100999",
+    ]);
+  });
+
+  it("keeps current topic first even when stale topic/group candidates appear earlier in history", () => {
+    expect(
+      resolveQmdScopeSessionCandidates({
+        sessionKey: "agent:main:telegram:group:-100111:topic:314",
+        sessionKeys: [
+          "agent:main:telegram:group:-100111:topic:7",
+          "agent:main:telegram:group:-100111",
+          "agent:main:telegram:group:-100111:topic:7",
+          "AGENT:MAIN:TELEGRAM:GROUP:-100111:TOPIC:314",
+          "agent:main:telegram:group:-100222",
+          "agent:main:telegram:group:-100111",
+        ],
+      }),
+    ).toEqual([
+      "agent:main:telegram:group:-100111:topic:314",
+      "agent:main:telegram:group:-100111:topic:7",
+      "agent:main:telegram:group:-100111",
+      "agent:main:telegram:group:-100222",
     ]);
   });
 

@@ -81,7 +81,7 @@ describe("resolveTelegramExecApproval", () => {
     );
   });
 
-  it("includes both subject and approver identity in client identity audit labels when they differ", async () => {
+  it("ignores mismatched explicit approver identity labels", async () => {
     const { resolveTelegramExecApproval } = await import("./exec-approval-resolver.js");
 
     await resolveTelegramExecApproval({
@@ -98,11 +98,10 @@ describe("resolveTelegramExecApproval", () => {
         clientDisplayName: expect.stringContaining("subject=telegram:work:sender:9"),
       }),
     );
-    expect(gatewayRuntimeHoisted.createClientSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        clientDisplayName: expect.stringContaining("approver=telegram:work:sender:9:delegate"),
-      }),
-    );
+    const createCall = gatewayRuntimeHoisted.createClientSpy.mock.calls[0]?.[0] as
+      | { clientDisplayName?: string }
+      | undefined;
+    expect(createCall?.clientDisplayName).not.toContain("approver=");
   });
 
   it("falls back to plugin.approval.resolve when exec approval ids are unknown", async () => {

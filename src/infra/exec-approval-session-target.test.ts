@@ -142,7 +142,28 @@ describe("exec approval session target", () => {
       channel: "whatsapp",
       to: "+15555550123",
       accountId: "work",
-      threadId: 1739201675,
+      threadId: "1739201675.123",
+    });
+  });
+
+  it("preserves non-integer thread ids from stored session delivery context", () => {
+    const tmpDir = createTempDir();
+    const storePath = path.join(tmpDir, "sessions.json");
+    const cfg = writeStoreFile(storePath, {
+      "agent:main:main": {
+        sessionId: "main",
+        updatedAt: 1,
+        lastChannel: "slack",
+        lastTo: "channel:C123",
+        lastThreadId: "1739201675.123",
+      },
+    });
+
+    expect(resolveExecApprovalSessionTarget({ cfg, request: baseRequest })).toEqual({
+      channel: "slack",
+      to: "channel:C123",
+      accountId: undefined,
+      threadId: "1739201675.123",
     });
   });
 

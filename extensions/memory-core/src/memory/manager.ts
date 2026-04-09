@@ -201,7 +201,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   private providerInitialized = false;
   protected fallbackFrom?: EmbeddingProviderId;
   protected fallbackReason?: string;
-  private providerUnavailableReason?: string;
+  protected providerUnavailableReason?: string;
   protected providerRuntime?: EmbeddingProviderRuntime;
   protected batch: {
     enabled: boolean;
@@ -447,7 +447,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       return [];
     }
     void this.warmSessions(
-      opts?.sessionKeys && opts.sessionKeys.length > 0 ? opts.sessionKeys : [opts?.sessionKey ?? ""],
+      opts?.sessionKeys && opts.sessionKeys.length > 0
+        ? opts.sessionKeys
+        : [opts?.sessionKey ?? ""],
     );
     if (this.settings.sync.onSearch && (this.dirty || this.sessionsDirty)) {
       void this.sync({ reason: "search" }).catch((err) => {
@@ -469,36 +471,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
 
     // FTS-only mode: no embedding provider available
     if (!this.provider) {
-      if (!this.fts.enabled || !this.fts.available) {
-        log.warn("memory search: no provider and FTS unavailable");
-        return [];
-      }
-
-      // Extract keywords for better FTS matching on conversational queries
-      // e.g., "that thing we discussed about the API" → ["discussed", "API"]
-      const keywords = extractKeywords(cleaned, {
-        ftsTokenizer: this.settings.store.fts.tokenizer,
-      });
-      const searchTerms = keywords.length > 0 ? keywords : [cleaned];
-
-      // Search with each keyword and merge results
-      const resultSets = await Promise.all(
-        searchTerms.map((term) => this.searchKeyword(term, candidates).catch(() => [])),
-      );
-
-      // Merge and deduplicate results, keeping highest score for each chunk
-      const seenIds = new Map<string, (typeof resultSets)[0][0]>();
-      for (const results of resultSets) {
-        for (const result of results) {
-          const existing = seenIds.get(result.id);
-          if (!existing || result.score > existing.score) {
-            seenIds.set(result.id, result);
-          }
-        }
-      }
-
-      const merged = [...seenIds.values()].toSorted((a, b) => b.score - a.score);
-      return this.selectScoredResults(merged, maxResults, minScore, 0);
+      return await this.searchFtsOnly(cleaned, { candidates, maxResults, minScore });
     }
 
     // If FTS isn't available, hybrid mode cannot use keyword search; degrade to vector-only.
@@ -507,7 +480,15 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         ? await this.searchKeyword(cleaned, candidates).catch(() => [])
         : [];
 
-    const queryVec = await this.embedQueryWithTimeout(cleaned);
+    let queryVec: number[] = [];
+    try {
+      queryVec = await this.embedQueryWithTimeout(cleaned);
+    } catch (err) {
+      if (!this.provider) {
+        return await this.searchFtsOnly(cleaned, { candidates, maxResults, minScore });
+      }
+      throw err;
+    }
     const hasVector = queryVec.some((v) => v !== 0);
     const vectorResults = hasVector
       ? await this.searchVector(queryVec, candidates).catch(() => [])
@@ -548,6 +529,46 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       minScore,
       relaxedMinScore,
     );
+  }
+
+  private async searchFtsOnly(
+    cleaned: string,
+    params: {
+      candidates: number;
+      maxResults: number;
+      minScore: number;
+    },
+  ): Promise<MemorySearchResult[]> {
+    if (!this.fts.enabled || !this.fts.available) {
+      log.warn("memory search: no provider and FTS unavailable");
+      return [];
+    }
+
+    // Extract keywords for better FTS matching on conversational queries
+    // e.g., "that thing we discussed about the API" → ["discussed", "API"]
+    const keywords = extractKeywords(cleaned, {
+      ftsTokenizer: this.settings.store.fts.tokenizer,
+    });
+    const searchTerms = keywords.length > 0 ? keywords : [cleaned];
+
+    // Search with each keyword and merge results
+    const resultSets = await Promise.all(
+      searchTerms.map((term) => this.searchKeyword(term, params.candidates).catch(() => [])),
+    );
+
+    // Merge and deduplicate results, keeping highest score for each chunk
+    const seenIds = new Map<string, (typeof resultSets)[0][0]>();
+    for (const results of resultSets) {
+      for (const result of results) {
+        const existing = seenIds.get(result.id);
+        if (!existing || result.score > existing.score) {
+          seenIds.set(result.id, result);
+        }
+      }
+    }
+
+    const merged = [...seenIds.values()].toSorted((a, b) => b.score - a.score);
+    return this.selectScoredResults(merged, params.maxResults, params.minScore, 0);
   }
 
   private selectScoredResults<T extends MemorySearchResult & { score: number }>(

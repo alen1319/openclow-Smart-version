@@ -61,6 +61,24 @@ function shouldContinueAutoSelection(
   return adapter.shouldContinueAutoSelection?.(err) ?? false;
 }
 
+function shouldDegradeToFtsOnly(params: {
+  provider: string;
+  fallback: string;
+  adapter: MemoryEmbeddingProviderAdapter;
+  error: unknown;
+}): boolean {
+  // Keep explicit auth failures as soft-degraded FTS-only mode.
+  if (shouldContinueAutoSelection(params.adapter, params.error)) {
+    return true;
+  }
+  // Local embeddings can be unavailable when llama/Metal runtime is missing.
+  // Prefer FTS-only instead of failing the memory command entirely.
+  if (params.provider === "local" && params.fallback === "none") {
+    return true;
+  }
+  return false;
+}
+
 function getAdapter(id: string): MemoryEmbeddingProviderAdapter {
   const adapter = getMemoryEmbeddingProvider(id);
   if (!adapter) {
@@ -179,6 +197,20 @@ export async function createEmbeddingProvider(
         wrapped.cause = primaryErr;
         throw wrapped;
       }
+    }
+    if (
+      shouldDegradeToFtsOnly({
+        provider: options.provider,
+        fallback: options.fallback,
+        adapter: primaryAdapter,
+        error: primaryErr,
+      })
+    ) {
+      return {
+        provider: null,
+        requestedProvider: options.provider,
+        providerUnavailableReason: reason,
+      };
     }
     const wrapped = new Error(reason) as Error & { cause?: unknown };
     wrapped.cause = primaryErr;

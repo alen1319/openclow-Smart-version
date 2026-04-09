@@ -10,6 +10,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ImageContent } from "../agents/command/types.js";
 import type { ClientToolDefinition } from "../agents/pi-embedded-runner/run/params.js";
+import { resolveToolAuthorizationContext } from "../agents/tool-policy.js";
+import type { ToolAuthorizationLevel } from "../agents/tools/common.js";
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommandFromIngress } from "../commands/agent.js";
 import type { GatewayHttpResponsesConfig } from "../config/types.gateway.js";
@@ -42,10 +44,12 @@ import {
   resolveAgentIdForRequest,
   resolveGatewayRequestContext,
   resolveOpenAiCompatModelOverride,
+  resolveHttpAuthorizationIdentity,
   resolveOpenAiCompatibleHttpOperatorScopes,
   resolveOpenAiCompatibleHttpSenderIsOwner,
 } from "./http-utils.js";
 import { normalizeInputHostnameAllowlist } from "./input-allowlist.js";
+import { APPROVALS_SCOPE } from "./method-scopes.js";
 import {
   CreateResponseBodySchema,
   type CreateResponseBody,
@@ -435,7 +439,13 @@ async function runResponsesAgentCommand(params: {
   sessionKey: string;
   runId: string;
   messageChannel: string;
+  senderId?: string;
   senderIsOwner: boolean;
+  senderIsApprover: boolean;
+  senderAuthorizationLevel: ToolAuthorizationLevel;
+  isAuthorizedSender: boolean;
+  authorizationSubjectKey?: string;
+  approverIdentityKey?: string;
   deps: ReturnType<typeof createDefaultDeps>;
 }) {
   return agentCommandFromIngress(
@@ -451,7 +461,13 @@ async function runResponsesAgentCommand(params: {
       deliver: false,
       messageChannel: params.messageChannel,
       bestEffortDeliver: false,
+      senderId: params.senderId,
       senderIsOwner: params.senderIsOwner,
+      senderIsApprover: params.senderIsApprover,
+      senderAuthorizationLevel: params.senderAuthorizationLevel,
+      isAuthorizedSender: params.isAuthorizedSender,
+      authorizationSubjectKey: params.authorizationSubjectKey,
+      approverIdentityKey: params.approverIdentityKey,
       allowModelOverride: true,
     },
     defaultRuntime,
@@ -491,6 +507,17 @@ export async function handleOpenResponsesHttpRequest(
   // On the compat surface, shared-secret bearer auth is also treated as an
   // owner sender so owner-only tool policy matches the documented contract.
   const senderIsOwner = resolveOpenAiCompatibleHttpSenderIsOwner(req, handled.requestAuth);
+  const requestedScopes = resolveOpenAiCompatibleHttpOperatorScopes(req, handled.requestAuth);
+  const senderIsApprover = senderIsOwner || requestedScopes.includes(APPROVALS_SCOPE);
+  const authorization = resolveToolAuthorizationContext({
+    senderIsOwner,
+    senderIsApprover,
+    isAuthorizedSender: true,
+  });
+  const authorizationIdentity = resolveHttpAuthorizationIdentity({
+    req,
+    senderIsApprover: authorization.senderIsApprover,
+  });
 
   // Validate request body with Zod
   const parseResult = CreateResponseBodySchema.safeParse(handled.body);
@@ -722,7 +749,13 @@ export async function handleOpenResponsesHttpRequest(
         sessionKey,
         runId: responseId,
         messageChannel,
-        senderIsOwner,
+        senderId: authorizationIdentity.requesterSenderId,
+        senderIsOwner: authorization.senderIsOwner,
+        senderIsApprover: authorization.senderIsApprover,
+        senderAuthorizationLevel: authorization.level,
+        isAuthorizedSender: authorization.isAuthorizedSender,
+        authorizationSubjectKey: authorizationIdentity.authorizationSubjectKey,
+        approverIdentityKey: authorizationIdentity.approverIdentityKey,
         deps,
       });
 
@@ -980,7 +1013,13 @@ export async function handleOpenResponsesHttpRequest(
         sessionKey,
         runId: responseId,
         messageChannel,
-        senderIsOwner,
+        senderId: authorizationIdentity.requesterSenderId,
+        senderIsOwner: authorization.senderIsOwner,
+        senderIsApprover: authorization.senderIsApprover,
+        senderAuthorizationLevel: authorization.level,
+        isAuthorizedSender: authorization.isAuthorizedSender,
+        authorizationSubjectKey: authorizationIdentity.authorizationSubjectKey,
+        approverIdentityKey: authorizationIdentity.approverIdentityKey,
         deps,
       });
 

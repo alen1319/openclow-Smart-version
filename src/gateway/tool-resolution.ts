@@ -14,12 +14,12 @@ import {
   mergeAlsoAllowPolicy,
   resolveToolProfilePolicy,
 } from "../agents/tool-policy.js";
+import type { ToolAuthorizationLevel } from "../agents/tools/common.js";
 import { loadConfig } from "../config/config.js";
 import { logWarn } from "../logger.js";
 import { getPluginToolMeta } from "../plugins/tools.js";
 import { isSubagentSessionKey } from "../routing/session-key.js";
 import { DEFAULT_GATEWAY_HTTP_TOOL_DENY } from "../security/dangerous-tools.js";
-import type { ToolAuthorizationLevel } from "../agents/tools/common.js";
 
 export function resolveGatewayScopedTools(params: {
   cfg: ReturnType<typeof loadConfig>;
@@ -27,7 +27,7 @@ export function resolveGatewayScopedTools(params: {
   messageProvider?: string;
   accountId?: string;
   agentTo?: string;
-  agentThreadId?: string;
+  agentThreadId?: string | number;
   requesterSenderId?: string;
   authorizationSubjectKey?: string;
   approverIdentityKey?: string;

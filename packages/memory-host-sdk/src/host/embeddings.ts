@@ -102,6 +102,22 @@ function isMissingApiKeyError(err: unknown): boolean {
   return message.includes("No API key found for provider");
 }
 
+function shouldDegradeToFtsOnly(params: {
+  provider: EmbeddingProviderRequest;
+  fallback: EmbeddingProviderFallback;
+  error: unknown;
+}): boolean {
+  if (isMissingApiKeyError(params.error)) {
+    return true;
+  }
+  // Local embeddings can be unavailable on machines without a working llama/Metal runtime.
+  // In that case we prefer a safe FTS-only downgrade over failing the entire memory command.
+  if (params.provider === "local" && params.fallback === "none") {
+    return true;
+  }
+  return false;
+}
+
 export async function createLocalEmbeddingProvider(
   options: EmbeddingProviderOptions,
 ): Promise<EmbeddingProvider> {
@@ -273,8 +289,14 @@ export async function createEmbeddingProvider(
         throw wrapped;
       }
     }
-    // No fallback configured - check if we should degrade to FTS-only
-    if (isMissingApiKeyError(primaryErr)) {
+    // No fallback configured - degrade to FTS-only for auth gaps and local-runtime outages.
+    if (
+      shouldDegradeToFtsOnly({
+        provider: requestedProvider,
+        fallback,
+        error: primaryErr,
+      })
+    ) {
       return {
         provider: null,
         requestedProvider,

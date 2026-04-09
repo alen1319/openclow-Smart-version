@@ -885,7 +885,9 @@ export class QmdMemoryManager implements MemorySearchManager {
       return [];
     }
     await this.maybeWarmSessions(
-      opts?.sessionKeys && opts.sessionKeys.length > 0 ? opts.sessionKeys : [opts?.sessionKey ?? ""],
+      opts?.sessionKeys && opts.sessionKeys.length > 0
+        ? opts.sessionKeys
+        : [opts?.sessionKey ?? ""],
     );
     await this.maybeSyncDirtySearchState();
     await this.waitForPendingUpdateBeforeSearch();
@@ -1264,7 +1266,7 @@ export class QmdMemoryManager implements MemorySearchManager {
     if (watchPaths.size === 0) {
       return;
     }
-    this.watcher = chokidar.watch(Array.from(watchPaths), {
+    const watcher = chokidar.watch(Array.from(watchPaths), {
       ignoreInitial: true,
       ignored: (watchPath) => shouldIgnoreMemoryWatchPath(String(watchPath)),
       awaitWriteFinish: {
@@ -1272,13 +1274,28 @@ export class QmdMemoryManager implements MemorySearchManager {
         pollInterval: 100,
       },
     });
+    this.watcher = watcher;
+    const disableWatcher = (reason: unknown) => {
+      const active = this.watcher;
+      if (!active) {
+        return;
+      }
+      this.watcher = null;
+      if (this.watchTimer) {
+        clearTimeout(this.watchTimer);
+        this.watchTimer = null;
+      }
+      log.warn(`qmd watcher disabled after error: ${String(reason)}`);
+      void active.close().catch(() => undefined);
+    };
     const markDirty = () => {
       this.dirty = true;
       this.scheduleWatchSync();
     };
-    this.watcher.on("add", markDirty);
-    this.watcher.on("change", markDirty);
-    this.watcher.on("unlink", markDirty);
+    watcher.on("error", disableWatcher);
+    watcher.on("add", markDirty);
+    watcher.on("change", markDirty);
+    watcher.on("unlink", markDirty);
   }
 
   private resolveCollectionWatchPath(collection: ManagedCollection): string {
@@ -2335,7 +2352,10 @@ export class QmdMemoryManager implements MemorySearchManager {
   private logScopeDenied(sessionInput?: string | string[]): void {
     const sessionKey = Array.isArray(sessionInput) ? sessionInput[0] : sessionInput;
     const key = Array.isArray(sessionInput)
-      ? sessionInput.map((value) => value.trim()).filter(Boolean).join(" | ") || "<none>"
+      ? sessionInput
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .join(" | ") || "<none>"
       : sessionKey?.trim() || "<none>";
     const channel = deriveQmdScopeChannel(sessionKey) ?? "unknown";
     const chatType = deriveQmdScopeChatType(sessionKey) ?? "unknown";

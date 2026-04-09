@@ -6,6 +6,7 @@ import { normalizeMessageChannel } from "../utils/message-channel.js";
 import { doesApprovalRequestMatchChannelAccount } from "./approval-request-account-binding.js";
 import type { ExecApprovalRequest } from "./exec-approvals.js";
 import { resolveSessionDeliveryTarget } from "./outbound/targets.js";
+import { normalizeOutboundThreadId } from "./outbound/thread-id.js";
 import type { PluginApprovalRequest } from "./plugin-approvals.js";
 
 export {
@@ -18,7 +19,7 @@ export type ExecApprovalSessionTarget = {
   channel?: string;
   to: string;
   accountId?: string;
-  threadId?: number;
+  threadId?: string | number;
 };
 
 type ApprovalRequestLike = ExecApprovalRequest | PluginApprovalRequest;
@@ -38,15 +39,16 @@ function normalizeOptionalString(value?: string | null): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-function normalizeOptionalThreadId(value?: string | number | null): number | undefined {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : undefined;
-  }
-  if (typeof value !== "string") {
+function normalizeOptionalThreadId(value?: string | number | null): string | number | undefined {
+  const normalized = normalizeOutboundThreadId(value);
+  if (!normalized) {
     return undefined;
   }
-  const normalized = Number.parseInt(value, 10);
-  return Number.isFinite(normalized) ? normalized : undefined;
+  if (!/^[+-]?\d+$/.test(normalized)) {
+    return normalized;
+  }
+  const numeric = Number(normalized);
+  return Number.isSafeInteger(numeric) ? numeric : normalized;
 }
 
 function isExecApprovalRequest(request: ApprovalRequestLike): request is ExecApprovalRequest {

@@ -803,6 +803,86 @@ describe("OpenResponses HTTP API (e2e)", () => {
     expect(streamingEvents.some((event) => event.event === "response.completed")).toBe(true);
   });
 
+  it("propagates authorization identity for approvers and strips approver identity for non-approvers", async () => {
+    const port = enabledPort;
+
+    agentCommand.mockClear();
+    agentCommand.mockResolvedValueOnce({ payloads: [{ text: "ok" }] } as never);
+
+    const approverRes = await postResponses(
+      port,
+      { model: "openclaw", input: "hi" },
+      {
+        "x-openclaw-scopes": "operator.write,operator.approvals",
+        "x-openclaw-requester-sender-id": "sender-42",
+        "x-openclaw-authorization-subject-key": "telegram:work:sender:42",
+        "x-openclaw-approver-identity-key": "telegram:work:sender:42:delegate",
+      },
+    );
+    expect(approverRes.status).toBe(200);
+    const approverCall = (agentCommand.mock.calls[0] as unknown[] | undefined)?.[0] as
+      | {
+          senderId?: string;
+          senderIsOwner?: boolean;
+          senderIsApprover?: boolean;
+          senderAuthorizationLevel?: string;
+          isAuthorizedSender?: boolean;
+          authorizationSubjectKey?: string;
+          approverIdentityKey?: string;
+        }
+      | undefined;
+    expect(approverCall).toEqual(
+      expect.objectContaining({
+        senderId: "sender-42",
+        senderIsOwner: false,
+        senderIsApprover: true,
+        senderAuthorizationLevel: "approver",
+        isAuthorizedSender: true,
+        authorizationSubjectKey: "telegram:work:sender:42",
+        approverIdentityKey: "telegram:work:sender:42:delegate",
+      }),
+    );
+    await ensureResponseConsumed(approverRes);
+
+    agentCommand.mockClear();
+    agentCommand.mockResolvedValueOnce({ payloads: [{ text: "ok" }] } as never);
+
+    const allowedRes = await postResponses(
+      port,
+      { model: "openclaw", input: "hi" },
+      {
+        "x-openclaw-scopes": "operator.write",
+        "x-openclaw-requester-sender-id": "sender-42",
+        "x-openclaw-authorization-subject-key": "telegram:work:sender:42",
+        "x-openclaw-approver-identity-key": "telegram:work:sender:42:delegate",
+      },
+    );
+    expect(allowedRes.status).toBe(200);
+    const allowedCall = (agentCommand.mock.calls[0] as unknown[] | undefined)?.[0] as
+      | {
+          senderId?: string;
+          senderIsOwner?: boolean;
+          senderIsApprover?: boolean;
+          senderAuthorizationLevel?: string;
+          isAuthorizedSender?: boolean;
+          authorizationSubjectKey?: string;
+          approverIdentityKey?: string;
+        }
+      | undefined;
+    expect(allowedCall).toEqual(
+      expect.objectContaining({
+        senderId: "sender-42",
+        senderIsOwner: false,
+        senderIsApprover: false,
+        senderAuthorizationLevel: "allowed",
+        isAuthorizedSender: true,
+        authorizationSubjectKey: "telegram:work:sender:42",
+        approverIdentityKey: undefined,
+      }),
+    );
+    await ensureResponseConsumed(allowedRes);
+  });
+
   it("treats shared-secret bearer callers as owner operators", async () => {
     const port = await getFreePort();
     const server = await startTokenServer(port);

@@ -47,13 +47,18 @@ export async function resolveTelegramExecApproval(
       accountId: params.accountId,
       senderId: params.senderId,
     });
+  const explicitApproverIdentityKey = params.approverIdentityKey?.trim() || undefined;
+  // Telegram approval identity is sender-scoped by design. Ignore mismatched
+  // explicit approver keys so callback metadata cannot drift from sender identity.
   const resolvedApproverIdentityKey =
-    params.approverIdentityKey?.trim() || resolvedAuthorizationSubjectKey;
+    resolvedAuthorizationSubjectKey &&
+    explicitApproverIdentityKey === resolvedAuthorizationSubjectKey
+      ? explicitApproverIdentityKey
+      : resolvedAuthorizationSubjectKey;
   const senderLabel = params.senderId?.trim() || "unknown";
   const identityLabels = [
     resolvedAuthorizationSubjectKey ? `subject=${resolvedAuthorizationSubjectKey}` : undefined,
-    resolvedApproverIdentityKey &&
-    resolvedApproverIdentityKey !== resolvedAuthorizationSubjectKey
+    resolvedApproverIdentityKey && resolvedApproverIdentityKey !== resolvedAuthorizationSubjectKey
       ? `approver=${resolvedApproverIdentityKey}`
       : undefined,
   ].filter((entry): entry is string => Boolean(entry));

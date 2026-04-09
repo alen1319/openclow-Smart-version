@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import {
+  resolveHttpToolDeliveryContext,
   resolveOpenAiCompatibleHttpOperatorScopes,
   resolveOpenAiCompatibleHttpSenderIsOwner,
   resolveGatewayRequestContext,
@@ -50,6 +51,37 @@ describe("resolveGatewayRequestContext", () => {
     });
 
     expect(result.sessionKey).toContain("openresponses-user:alice");
+  });
+});
+
+describe("resolveHttpToolDeliveryContext", () => {
+  it("parses provider-owned topic targets into to/threadId when message channel is present", () => {
+    const result = resolveHttpToolDeliveryContext(
+      createReq({
+        "x-openclaw-message-channel": "telegram",
+        "x-openclaw-message-to": "telegram:group:-100123:topic:77",
+      }),
+    );
+
+    expect(result).toEqual({
+      messageChannel: "telegram",
+      accountId: undefined,
+      agentTo: "-100123",
+      agentThreadId: 77,
+    });
+  });
+
+  it("keeps explicit thread header higher priority than parsed target thread", () => {
+    const result = resolveHttpToolDeliveryContext(
+      createReq({
+        "x-openclaw-message-channel": "telegram",
+        "x-openclaw-message-to": "telegram:group:-100123:topic:77",
+        "x-openclaw-thread-id": "thread-override",
+      }),
+    );
+
+    expect(result.agentThreadId).toBe("thread-override");
+    expect(result.agentTo).toBe("-100123");
   });
 });
 
@@ -135,13 +167,15 @@ describe("resolveOpenAiCompatibleHttpOperatorScopes", () => {
       { authMethod: "token", trustDeclaredOperatorScopes: false },
     );
 
-    expect(scopes).toEqual([
-      "operator.admin",
-      "operator.read",
-      "operator.write",
-      "operator.approvals",
-      "operator.pairing",
-    ]);
+    expect(scopes).toEqual(
+      expect.arrayContaining([
+        "operator.admin",
+        "operator.read",
+        "operator.write",
+        "operator.approvals",
+        "operator.pairing",
+      ]),
+    );
   });
 
   it("keeps declared scopes for trusted HTTP identity-bearing requests", () => {

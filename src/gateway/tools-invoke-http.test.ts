@@ -599,6 +599,33 @@ describe("POST /tools/invoke", () => {
     });
   });
 
+  it("normalizes provider-owned topic targets from HTTP headers before tool routing", async () => {
+    cfg = {
+      ...cfg,
+      agents: {
+        list: [{ id: "main", default: true, tools: { allow: ["sessions_spawn"] } }],
+      },
+      gateway: { tools: { allow: ["sessions_spawn"] } },
+    };
+
+    const res = await invokeTool({
+      port: sharedPort,
+      headers: {
+        ...gatewayAuthHeaders(),
+        "x-openclaw-message-channel": "telegram",
+        "x-openclaw-message-to": "telegram:group:-100123:topic:77",
+      },
+      tool: "sessions_spawn",
+      sessionKey: "main",
+    });
+
+    const body = await expectOkInvokeResponse(res);
+    expect(body.result?.route).toEqual({
+      agentTo: "-100123",
+      agentThreadId: 77,
+    });
+  });
+
   it("denies sessions_send via HTTP gateway", async () => {
     setMainAllowedTools({ allow: ["sessions_send"] });
 

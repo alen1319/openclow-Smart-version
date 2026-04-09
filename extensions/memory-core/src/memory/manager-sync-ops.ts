@@ -415,7 +415,7 @@ export abstract class MemoryManagerSyncOps {
         // Skip missing/unreadable additional paths.
       }
     }
-    this.watcher = chokidar.watch(Array.from(watchPaths), {
+    const watcher = chokidar.watch(Array.from(watchPaths), {
       ignoreInitial: true,
       ignored: (watchPath) => shouldIgnoreMemoryWatchPath(String(watchPath)),
       awaitWriteFinish: {
@@ -423,13 +423,28 @@ export abstract class MemoryManagerSyncOps {
         pollInterval: 100,
       },
     });
+    this.watcher = watcher;
+    const disableWatcher = (reason: unknown) => {
+      const active = this.watcher;
+      if (!active) {
+        return;
+      }
+      this.watcher = null;
+      if (this.watchTimer) {
+        clearTimeout(this.watchTimer);
+        this.watchTimer = null;
+      }
+      log.warn(`memory watcher disabled after error: ${String(reason)}`);
+      void active.close().catch(() => undefined);
+    };
     const markDirty = () => {
       this.dirty = true;
       this.scheduleWatchSync();
     };
-    this.watcher.on("add", markDirty);
-    this.watcher.on("change", markDirty);
-    this.watcher.on("unlink", markDirty);
+    watcher.on("error", disableWatcher);
+    watcher.on("add", markDirty);
+    watcher.on("change", markDirty);
+    watcher.on("unlink", markDirty);
   }
 
   protected ensureSessionListener() {

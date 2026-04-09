@@ -44,6 +44,31 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
   protected abstract batchFailureLastError?: string;
   protected abstract batchFailureLastProvider?: string;
   protected abstract batchFailureLock: Promise<void>;
+  protected abstract providerUnavailableReason?: string;
+
+  private shouldDowngradeToFtsOnly(err: unknown): boolean {
+    if (!this.provider || this.provider.id !== "local") {
+      return false;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return /failed to create context|failed to initialize|node-llama-cpp|local embeddings unavailable/i.test(
+      message,
+    );
+  }
+
+  private downgradeToFtsOnly(reason: string): void {
+    const providerId = this.provider?.id;
+    if (!providerId) {
+      return;
+    }
+    this.provider = null;
+    this.providerUnavailableReason = reason;
+    this.providerKey = this.computeProviderKey();
+    this.vectorReady = null;
+    log.warn(
+      `memory embeddings provider unavailable (${providerId}); downgraded to FTS-only mode: ${reason}`,
+    );
+  }
 
   private buildEmbeddingBatches(chunks: MemoryChunk[]): MemoryChunk[][] {
     const batches: MemoryChunk[][] = [];
@@ -331,6 +356,10 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (this.shouldDowngradeToFtsOnly(err)) {
+          this.downgradeToFtsOnly(message);
+          throw err;
+        }
         if (!this.isRetryableEmbeddingError(message) || attempt >= EMBEDDING_RETRY_MAX_ATTEMPTS) {
           throw err;
         }
@@ -365,6 +394,10 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (this.shouldDowngradeToFtsOnly(err)) {
+          this.downgradeToFtsOnly(message);
+          throw err;
+        }
         if (!this.isRetryableEmbeddingError(message) || attempt >= EMBEDDING_RETRY_MAX_ATTEMPTS) {
           throw err;
         }
@@ -404,11 +437,19 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     }
     const timeoutMs = this.resolveEmbeddingTimeout("query");
     log.debug("memory embeddings: query start", { provider: this.provider.id, timeoutMs });
-    return await this.withTimeout(
-      this.provider.embedQuery(text),
-      timeoutMs,
-      `memory embeddings query timed out after ${Math.round(timeoutMs / 1000)}s`,
-    );
+    try {
+      return await this.withTimeout(
+        this.provider.embedQuery(text),
+        timeoutMs,
+        `memory embeddings query timed out after ${Math.round(timeoutMs / 1000)}s`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (this.shouldDowngradeToFtsOnly(err)) {
+        this.downgradeToFtsOnly(message);
+      }
+      throw err;
+    }
   }
 
   protected async withTimeout<T>(
@@ -722,6 +763,10 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         ? await this.embedChunksWithBatch(chunks, entry, options.source)
         : await this.embedChunksInBatches(chunks);
     } catch (err) {
+      if (!this.provider) {
+        this.writeChunks(entry, options.source, "fts-only", chunks, [], false);
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       if (
         "kind" in entry &&

@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,10 +11,12 @@ import type { MemoryIndexManager } from "./index.js";
 import { registerBuiltInMemoryEmbeddingProviders } from "./provider-adapters.js";
 
 const { watchMock } = vi.hoisted(() => ({
-  watchMock: vi.fn(() => ({
-    on: vi.fn(),
-    close: vi.fn(async () => undefined),
-  })),
+  watchMock: vi.fn(() => {
+    const watcher = new EventEmitter();
+    return Object.assign(watcher, {
+      close: vi.fn(async () => undefined),
+    });
+  }),
 }));
 
 vi.mock("chokidar", () => ({
@@ -169,5 +172,21 @@ describe("memory watcher config", () => {
         path.join(extraDir, "**", "*.[wW][aA][vV]"),
       ]),
     );
+  });
+
+  it("disables watch mode when chokidar emits an error", async () => {
+    await setupWatcherWorkspace({ name: "notes.md", contents: "hello" });
+    const cfg = createWatcherConfig();
+
+    await expectWatcherManager(cfg);
+    const watcher = watchMock.mock.results[0]?.value as EventEmitter & {
+      close: ReturnType<typeof vi.fn>;
+    };
+    expect(watcher).toBeTruthy();
+
+    watcher.emit("error", new Error("EMFILE: too many open files, watch"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(watcher.close).toHaveBeenCalledTimes(1);
   });
 });
