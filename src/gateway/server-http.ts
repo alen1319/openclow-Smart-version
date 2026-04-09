@@ -16,6 +16,7 @@ import { loadConfig } from "../config/config.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveHookExternalContentSource as resolveHookExternalContentSourceFromSession } from "../security/external-content.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
+import { handleAdminReplayLookupHttp, handleAdminTraceLookupHttp } from "../surfaces/admin/api.js";
 import {
   AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH,
   createAuthRateLimiter,
@@ -806,6 +807,29 @@ export function createGatewayHttpServer(opts: {
         {
           name: "hooks",
           run: () => handleHooksRequest(req, res),
+        },
+        {
+          name: "admin-observability",
+          run: async () => {
+            if (requestPath !== "/admin/api/trace" && requestPath !== "/admin/api/replay") {
+              return false;
+            }
+            const requestAuth = await authorizeGatewayHttpRequestOrReply({
+              req,
+              res,
+              auth: resolvedAuth,
+              trustedProxies,
+              allowRealIpFallback,
+              rateLimiter,
+            });
+            if (!requestAuth) {
+              return true;
+            }
+            if (requestPath === "/admin/api/replay") {
+              return await handleAdminReplayLookupHttp(req, res);
+            }
+            return handleAdminTraceLookupHttp(req, res);
+          },
         },
         {
           name: "models",
