@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   })),
   normalizeMessageChannel: vi.fn((channel: string) => channel),
   isDeliverableMessageChannel: vi.fn(() => true),
-  deliverOutboundPayloads: vi.fn(async () => []),
+  sendMessage: vi.fn(async () => ({})),
   enqueueSystemEvent: vi.fn(),
 }));
 
@@ -55,8 +55,8 @@ describe("deliverSessionMaintenanceWarning", () => {
     vi.doMock("../utils/delivery-context.js", () => ({
       deliveryContextFromSession: mocks.deliveryContextFromSession,
     }));
-    vi.doMock("./outbound/deliver-runtime.js", () => ({
-      deliverOutboundPayloads: mocks.deliverOutboundPayloads,
+    vi.doMock("./outbound/message.js", () => ({
+      sendMessage: mocks.sendMessage,
     }));
     vi.doMock("./system-events.js", () => ({
       enqueueSystemEvent: mocks.enqueueSystemEvent,
@@ -77,7 +77,7 @@ describe("deliverSessionMaintenanceWarning", () => {
     mocks.deliveryContextFromSession.mockClear();
     mocks.normalizeMessageChannel.mockClear();
     mocks.isDeliverableMessageChannel.mockClear();
-    mocks.deliverOutboundPayloads.mockClear();
+    mocks.sendMessage.mockClear();
     mocks.enqueueSystemEvent.mockClear();
   });
 
@@ -99,11 +99,12 @@ describe("deliverSessionMaintenanceWarning", () => {
 
     await deliverSessionMaintenanceWarning(params);
 
-    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledWith(
+    expect(mocks.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "whatsapp",
         to: "+15550001",
-        session: { key: "agent:main:main", agentId: "agent-from-key" },
+        content: expect.stringContaining("Session maintenance warning"),
+        mirror: { sessionKey: "agent:main:main" },
       }),
     );
     expect(mocks.enqueueSystemEvent).not.toHaveBeenCalled();
@@ -115,7 +116,7 @@ describe("deliverSessionMaintenanceWarning", () => {
     await deliverSessionMaintenanceWarning(params);
     await deliverSessionMaintenanceWarning(params);
 
-    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to a system event when the last target is not deliverable", async () => {
@@ -138,7 +139,7 @@ describe("deliverSessionMaintenanceWarning", () => {
       }),
     );
 
-    expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
     expect(mocks.enqueueSystemEvent).toHaveBeenCalledWith(
       expect.stringContaining("most recent 10 sessions"),
       expect.objectContaining({ sessionKey: expect.stringContaining("agent:") }),
@@ -151,12 +152,12 @@ describe("deliverSessionMaintenanceWarning", () => {
     await deliverSessionMaintenanceWarning(createParams());
 
     expect(mocks.deliveryContextFromSession).not.toHaveBeenCalled();
-    expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
     expect(mocks.enqueueSystemEvent).not.toHaveBeenCalled();
   });
 
   it("enqueues a system event when outbound delivery fails", async () => {
-    mocks.deliverOutboundPayloads.mockRejectedValueOnce(new Error("boom"));
+    mocks.sendMessage.mockRejectedValueOnce(new Error("boom"));
 
     await deliverSessionMaintenanceWarning(createParams());
 

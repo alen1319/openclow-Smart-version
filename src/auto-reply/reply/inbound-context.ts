@@ -1,6 +1,6 @@
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { resolveConversationLabel } from "../../channels/conversation-label.js";
-import { resolveAuthSubjectFromInboundContext } from "../../domain/identity/identity-resolver.js";
+import { resolveAuthorizationSubjectFromInboundContext } from "../../domain/identity/identity-resolver.js";
 import type { FinalizedMsgContext, MsgContext } from "../templating.js";
 import { normalizeInboundTextNewlines, sanitizeInboundSystemTags } from "./inbound-text.js";
 
@@ -112,9 +112,9 @@ export function finalizeInboundContext<T extends Record<string, unknown>>(
 
   // Channel ingress identity convergence: map inbound sender context into a
   // stable subject object before command/session routing layers read it.
-  const authSubject = resolveAuthSubjectFromInboundContext(normalized);
-  if (authSubject) {
-    normalized.AuthSubject = authSubject;
+  const authorizationSubject = resolveAuthorizationSubjectFromInboundContext(normalized);
+  if (authorizationSubject) {
+    normalized.AuthorizationSubject = authorizationSubject;
   }
 
   // MediaType/MediaTypes alignment:

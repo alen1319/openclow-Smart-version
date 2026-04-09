@@ -8,7 +8,7 @@ import { MemoryOrchestrator } from "./MemoryOrchestrator.js";
 const subject: AuthorizationSubject = {
   uid: "user-1",
   platform: "web",
-  role: "user",
+  role: "allowed",
   permissions: [],
   metadata: {},
 };

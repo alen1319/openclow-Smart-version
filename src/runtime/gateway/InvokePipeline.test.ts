@@ -6,8 +6,8 @@ import { handleToolInvoke } from "./InvokePipeline.js";
 
 const subject: AuthorizationSubject = {
   uid: "tg:123",
-  platform: "telegram",
-  role: "user",
+  platform: "tg",
+  role: "allowed",
   permissions: [],
   metadata: {},
 };

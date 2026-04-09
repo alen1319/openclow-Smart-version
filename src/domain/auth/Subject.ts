@@ -1,10 +1,13 @@
 /**
  * @description AuthorizationSubject: 智慧版唯一的身份度量衡
  */
+export type AuthorizationPlatform = "tg" | "web" | "system";
+export type AuthorizationRole = "guest" | "allowed" | "approver" | "owner";
+
 export interface AuthorizationSubject {
   readonly uid: string;
-  readonly platform: "telegram" | "web" | "system";
-  readonly role: "admin" | "user" | "guest";
+  readonly platform: AuthorizationPlatform;
+  readonly role: AuthorizationRole;
   readonly permissions: string[];
   readonly metadata: Record<string, unknown>;
 }

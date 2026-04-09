@@ -50,6 +50,10 @@ import { scheduleGatewayUpdateCheck } from "../infra/update-startup.js";
 import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/diagnostic.js";
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
 import {
+  getRuntimeAuditService,
+  initializeObservabilityRuntime,
+} from "../observability/runtime.js";
+import {
   resolveConfiguredDeferredChannelPluginIds,
   resolveGatewayStartupPluginIds,
 } from "../plugins/channel-plugin-ids.js";
@@ -60,6 +64,7 @@ import { createPluginRuntime } from "../plugins/runtime/index.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { getTotalQueueSize } from "../process/command-queue.js";
 import type { RuntimeEnv } from "../runtime.js";
+import { createSessionMemoryLifecycle } from "../runtime/sessions/SessionMemoryLifecycle.js";
 import type { CommandSecretAssignment } from "../secrets/command-config.js";
 import {
   GATEWAY_AUTH_SURFACE_PATHS,
@@ -408,6 +413,7 @@ export async function startGatewayServer(
     key: "OPENCLAW_RAW_STREAM_PATH",
     description: "raw stream log path override",
   });
+  initializeObservabilityRuntime();
 
   let configSnapshot = await readConfigFileSnapshot();
   if (configSnapshot.legacyIssues.length > 0) {
@@ -882,6 +888,12 @@ export async function startGatewayServer(
   let heartbeatUnsub: (() => void) | null = null;
   let transcriptUnsub: (() => void) | null = null;
   let lifecycleUnsub: (() => void) | null = null;
+  const sessionMemoryLifecycle = minimalTestGateway
+    ? null
+    : createSessionMemoryLifecycle({
+        auditService: getRuntimeAuditService(),
+        logger: (line) => log.info(line),
+      });
   try {
     try {
       mcpServer = await startMcpLoopbackServer(0);
@@ -1088,11 +1100,20 @@ export async function startGatewayServer(
     lifecycleUnsub = minimalTestGateway
       ? null
       : onSessionLifecycleEvent((event) => {
+          const sessionRow = loadGatewaySessionRow(event.sessionKey);
+          if (sessionMemoryLifecycle) {
+            void sessionMemoryLifecycle
+              .handleEvent({ event, sessionRow })
+              .catch((error) =>
+                log.warn(
+                  `session memory lifecycle handling failed for ${event.sessionKey}: ${String(error)}`,
+                ),
+              );
+          }
           const connIds = sessionEventSubscribers.getAll();
           if (connIds.size === 0) {
             return;
           }
-          const sessionRow = loadGatewaySessionRow(event.sessionKey);
           broadcastToConnIds(
             "sessions.changed",
             {

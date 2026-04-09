@@ -7,6 +7,12 @@ export type TraceEvent = {
   timestamp: number;
 };
 
+export type TraceSink = (event: TraceEvent) => Promise<void> | void;
+export type TraceProviderOptions = {
+  sink?: TraceSink | null;
+  logger?: (prefix: string, payload: string) => void;
+};
+
 const MAX_EVENTS_PER_TRACE = 200;
 const MAX_RECENT_TRACE_IDS = 500;
 
@@ -16,6 +22,19 @@ const MAX_RECENT_TRACE_IDS = 500;
 export class TraceProvider {
   private static readonly eventsByTrace = new Map<string, TraceEvent[]>();
   private static readonly recentTraceIds: string[] = [];
+  private static sink: TraceSink | null = null;
+  private static logger: (prefix: string, payload: string) => void = (prefix, payload) => {
+    console.log(prefix, payload);
+  };
+
+  static configure(options: TraceProviderOptions): void {
+    if (options.sink !== undefined) {
+      this.sink = options.sink;
+    }
+    if (options.logger) {
+      this.logger = options.logger;
+    }
+  }
 
   static record(traceId: string, node: string, detail: unknown): void {
     try {
@@ -38,8 +57,13 @@ export class TraceProvider {
       }
       this.eventsByTrace.set(normalizedTraceId, events);
       this.touchRecent(normalizedTraceId);
-
-      console.log(`[Trace:${normalizedTraceId}] [Node:${normalizedNode}]`, JSON.stringify(detail));
+      if (this.sink) {
+        void Promise.resolve(this.sink(event)).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[Trace] sink write failed: ${message}`);
+        });
+      }
+      this.logger(`[Trace:${normalizedTraceId}] [Node:${normalizedNode}]`, JSON.stringify(detail));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[Trace] record failed: ${message}`);
@@ -81,6 +105,10 @@ export class TraceProvider {
   static resetForTests(): void {
     this.eventsByTrace.clear();
     this.recentTraceIds.splice(0, this.recentTraceIds.length);
+    this.sink = null;
+    this.logger = (prefix, payload) => {
+      console.log(prefix, payload);
+    };
   }
 
   private static touchRecent(traceId: string): void {

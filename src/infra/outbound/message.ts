@@ -1,7 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import type { OpenClawConfig } from "../../config/config.js";
+import { Failure, Success } from "../../core/outcome.js";
+import type { DeliveryParcel } from "../../domain/delivery/Parcel.js";
+import { resolveInteractiveTextFallback } from "../../interactive/payload.js";
 import type { PollInput } from "../../polls.js";
 import { normalizePollInput } from "../../polls.js";
+import { DeliveryDispatcher } from "../../services/delivery/DeliveryDispatcher.js";
 import {
   GATEWAY_CLIENT_MODES,
   GATEWAY_CLIENT_NAMES,
@@ -217,6 +222,143 @@ async function resolveGatewayIdempotencyKey(idempotencyKey?: string): Promise<st
   return randomIdempotencyKey();
 }
 
+async function dispatchDirectViaDeliveryDispatcher(params: {
+  cfg: OpenClawConfig;
+  channel: string;
+  to: string;
+  accountId?: string;
+  payloads: ReturnType<typeof normalizeReplyPayloadsForDelivery>;
+  threadId?: string | number;
+  bestEffort?: boolean;
+  deps?: OutboundSendDeps;
+  session?: ReturnType<typeof buildOutboundSessionContext>;
+  mirror?: OutboundMirror;
+  abortSignal?: AbortSignal;
+  gifPlayback?: boolean;
+  forceDocument?: boolean;
+  silent?: boolean;
+  idempotencyKey?: string;
+}): Promise<OutboundDeliveryResult | undefined> {
+  if (params.channel !== "telegram") {
+    return undefined;
+  }
+  if (params.payloads.length === 0) {
+    return undefined;
+  }
+
+  let lastResult: OutboundDeliveryResult | undefined;
+  const dispatcher = new DeliveryDispatcher();
+  dispatcher.registerProvider({
+    protocol: "telegram",
+    send: async (parcel) => {
+      const interactive =
+        parcel.content.buttons && parcel.content.buttons.length > 0
+          ? {
+              blocks: [
+                {
+                  type: "buttons" as const,
+                  buttons: parcel.content.buttons.map((button) => ({
+                    label: button.label,
+                    value: button.value,
+                  })),
+                },
+              ],
+            }
+          : undefined;
+      const results = await deliverOutboundPayloads({
+        cfg: params.cfg,
+        channel: params.channel,
+        to: parcel.target.recipientId,
+        session: params.session,
+        accountId: params.accountId,
+        payloads: [
+          {
+            text: parcel.content.text,
+            ...(parcel.content.media?.url ? { mediaUrl: parcel.content.media.url } : {}),
+            ...(interactive ? { interactive } : {}),
+          },
+        ],
+        threadId: parcel.target.threadId,
+        gifPlayback: params.gifPlayback,
+        forceDocument: params.forceDocument,
+        deps: params.deps,
+        bestEffort: params.bestEffort,
+        abortSignal: params.abortSignal,
+        silent: params.silent,
+        mirror: params.mirror,
+      });
+      lastResult = results.at(-1);
+      if (!lastResult?.messageId) {
+        return Failure("telegram delivery returned no messageId");
+      }
+      return Success(lastResult.messageId);
+    },
+  });
+
+  const baseTraceId = params.idempotencyKey?.trim() || `delivery:${randomUUID()}`;
+  const parcels: DeliveryParcel[] = [];
+  for (let index = 0; index < params.payloads.length; index += 1) {
+    const payload = params.payloads[index];
+    const resolvedText = resolveInteractiveTextFallback({
+      text: payload.text,
+      interactive: payload.interactive,
+    });
+    const text = resolvedText?.trim();
+    if (!text) {
+      return undefined;
+    }
+    if (payload.replyToId || payload.replyToTag || payload.replyToCurrent || payload.channelData) {
+      return undefined;
+    }
+    const mediaUrl = payload.mediaUrl?.trim() || payload.mediaUrls?.[0]?.trim();
+    if ((payload.mediaUrls?.length ?? 0) > 1) {
+      return undefined;
+    }
+    const buttons = (payload.interactive?.blocks ?? [])
+      .flatMap((block) => {
+        if (block.type === "buttons") {
+          return block.buttons.map((button) => ({
+            label: button.label.trim(),
+            value: button.value.trim(),
+          }));
+        }
+        if (block.type === "select") {
+          return block.options.map((option) => ({
+            label: option.label.trim(),
+            value: option.value.trim(),
+          }));
+        }
+        return [];
+      })
+      .filter((button) => button.label && button.value);
+
+    parcels.push({
+      traceId: `${baseTraceId}:${String(index + 1)}`,
+      target: {
+        protocol: "telegram",
+        recipientId: params.to,
+        threadId: params.threadId != null ? String(params.threadId) : undefined,
+      },
+      content: {
+        text,
+        ...(mediaUrl ? { media: { type: "image" as const, url: mediaUrl } } : {}),
+        ...(buttons.length > 0 ? { buttons } : {}),
+      },
+      options: {
+        importance: "normal",
+      },
+    });
+  }
+
+  for (const parcel of parcels) {
+    const dispatched = await dispatcher.dispatch(parcel);
+    if (!dispatched.success) {
+      throw dispatched.error;
+    }
+  }
+  return lastResult;
+}
+
 export async function sendMessage(params: MessageSendParams): Promise<MessageSendResult> {
   const cfg = await resolveMessageConfig(params.cfg);
   const channel = await resolveRequiredChannel({ cfg, channel: params.channel });
@@ -267,6 +409,41 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       agentId: params.agentId,
       sessionKey: params.mirror?.sessionKey,
     });
+    const resolvedMirror = params.mirror
+      ? {
+          ...params.mirror,
+          text: mirrorText || params.content,
+          mediaUrls: mirrorMediaUrls.length ? mirrorMediaUrls : undefined,
+          idempotencyKey: params.mirror.idempotencyKey ?? params.idempotencyKey,
+        }
+      : undefined;
+    const dispatcherResult = await dispatchDirectViaDeliveryDispatcher({
+      cfg,
+      channel: outboundChannel,
+      to: resolvedTarget.to,
+      accountId: params.accountId,
+      payloads: normalizedPayloads,
+      threadId: params.threadId,
+      deps: params.deps,
+      bestEffort: params.bestEffort,
+      session: outboundSession,
+      mirror: resolvedMirror,
+      abortSignal: params.abortSignal,
+      gifPlayback: params.gifPlayback,
+      forceDocument: params.forceDocument,
+      silent: params.silent,
+      idempotencyKey: params.idempotencyKey,
+    });
+    if (dispatcherResult) {
+      return {
+        channel,
+        to: params.to,
+        via: "direct",
+        mediaUrl: primaryMediaUrl,
+        mediaUrls: mirrorMediaUrls.length ? mirrorMediaUrls : undefined,
+        result: dispatcherResult,
+      };
+    }
     const results = await deliverOutboundPayloads({
       cfg,
       channel: outboundChannel,
@@ -282,14 +459,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       bestEffort: params.bestEffort,
       abortSignal: params.abortSignal,
       silent: params.silent,
-      mirror: params.mirror
-        ? {
-            ...params.mirror,
-            text: mirrorText || params.content,
-            mediaUrls: mirrorMediaUrls.length ? mirrorMediaUrls : undefined,
-            idempotencyKey: params.mirror.idempotencyKey ?? params.idempotencyKey,
-          }
-        : undefined,
+      mirror: resolvedMirror,
     });
 
     return {

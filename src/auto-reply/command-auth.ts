@@ -565,7 +565,7 @@ export function resolveCommandAuthorization(params: {
   const matchedCommandOwner = ownerCandidatesForCommands.length
     ? senderCandidates.find((candidate) => ownerCandidatesForCommands.includes(candidate))
     : undefined;
-  const senderId = matchedSender ?? senderCandidates[0] ?? ctx.AuthSubject?.id;
+  const senderId = matchedSender ?? senderCandidates[0] ?? ctx.AuthorizationSubject?.uid;
 
   const enforceOwner = Boolean(plugin?.commands?.enforceOwnerForCommands);
   const senderIsOwnerByIdentity = Boolean(matchedSender);
@@ -618,7 +618,7 @@ export function resolveCommandAuthorization(params: {
     isAuthorizedSender,
   }).level;
   const authorizationIdentity = resolveAuthorizationIdentity({
-    authorizationSubjectKey: ctx.AuthorizationSubjectKey ?? ctx.AuthSubject?.id,
+    authorizationSubjectKey: ctx.AuthorizationSubjectKey ?? ctx.AuthorizationSubject?.uid,
     senderIsApprover,
   });
 

@@ -4,8 +4,8 @@ import { AuthorizationService } from "./AuthorizationService.js";
 
 const subject: AuthorizationSubject = {
   uid: "tg:42",
-  platform: "telegram",
-  role: "user",
+  platform: "tg",
+  role: "allowed",
   permissions: [],
   metadata: {},
 };
@@ -66,6 +66,46 @@ describe("AuthorizationService", () => {
     expect(first.success).toBe(true);
     expect(second.success).toBe(true);
     expect(approvalBridge.wait).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits audit events with session context for manual approvals", async () => {
+    const policyEngine = {
+      check: vi.fn().mockResolvedValue({
+        isDenied: false,
+        requireManualApproval: true,
+      }),
+    };
+    const approvalBridge = {
+      wait: vi.fn().mockResolvedValue({
+        approved: true,
+        reason: "approved",
+        approverId: "ops-2",
+        approvalId: "approval:manual-audit",
+      }),
+    };
+    const audit = {
+      logApprovalRequested: vi.fn(),
+      logApproval: vi.fn(),
+    };
+    const service = new AuthorizationService(policyEngine, approvalBridge, audit);
+
+    await service.authorize(
+      { ...subject, metadata: { sessionKey: "agent:main:main" } },
+      { ...baseIntent, approvalId: "approval:manual-audit" },
+    );
+
+    expect(audit.logApprovalRequested).toHaveBeenCalledWith(
+      "approval:manual-audit",
+      expect.any(Object),
+      expect.any(Object),
+      "agent:main:main",
+    );
+    expect(audit.logApproval).toHaveBeenCalledWith(
+      "approval:manual-audit",
+      expect.any(Object),
+      true,
+      "agent:main:main",
+    );
   });
 
   it("returns failure when policy engine throws", async () => {

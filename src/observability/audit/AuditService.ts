@@ -1,7 +1,16 @@
 export type AuditEvent =
   | {
+      type: "APPROVAL_REQUESTED";
+      approvalId: string;
+      sessionId?: string;
+      subject: unknown;
+      intent: unknown;
+      timestamp: number;
+    }
+  | {
       type: "APPROVAL_DECISION";
       approvalId: string;
+      sessionId?: string;
       subject: unknown;
       decision: boolean;
       timestamp: number;
@@ -25,15 +34,44 @@ export class AuditService {
     private readonly logger: (line: string) => void = console.log,
   ) {}
 
-  async logApproval(approvalId: string, subject: unknown, decision: boolean): Promise<void> {
+  async logApprovalRequested(
+    approvalId: string,
+    subject: unknown,
+    intent: unknown,
+    sessionId?: string,
+  ): Promise<void> {
+    const event: AuditEvent = {
+      type: "APPROVAL_REQUESTED",
+      approvalId,
+      sessionId: sessionId?.trim() || undefined,
+      subject,
+      intent,
+      timestamp: Date.now(),
+    };
+    await this.safeWrite(
+      event,
+      `[Audit] APPROVAL_REQUESTED: ${approvalId}${sessionId ? ` | Session: ${sessionId}` : ""}`,
+    );
+  }
+
+  async logApproval(
+    approvalId: string,
+    subject: unknown,
+    decision: boolean,
+    sessionId?: string,
+  ): Promise<void> {
     const event: AuditEvent = {
       type: "APPROVAL_DECISION",
       approvalId,
+      sessionId: sessionId?.trim() || undefined,
       subject,
       decision,
       timestamp: Date.now(),
     };
-    await this.safeWrite(event, `[Audit] APPROVAL_DECISION: ${approvalId} | Decision: ${decision}`);
+    await this.safeWrite(
+      event,
+      `[Audit] APPROVAL_DECISION: ${approvalId} | Decision: ${decision}${sessionId ? ` | Session: ${sessionId}` : ""}`,
+    );
   }
 
   async logMemoryMutation(

@@ -5,6 +5,7 @@ import type {
   AuthorizationSubject,
   TaskIntent,
 } from "../../domain/auth/Subject.js";
+import type { AuditService } from "../../observability/audit/AuditService.js";
 import { TraceProvider } from "../../observability/tracing/TraceProvider.js";
 import type { IApprovalBridge } from "./IApprovalBridge.js";
 import type { IAuthorizer } from "./IAuthorizer.js";
@@ -28,6 +29,7 @@ export class AuthorizationService implements IAuthorizer {
   constructor(
     private readonly policyEngine: AuthorizationPolicyEngine,
     private readonly approvalBridge: IApprovalBridge,
+    private readonly auditService?: Pick<AuditService, "logApproval" | "logApprovalRequested">,
   ) {}
 
   async authorize(
@@ -36,6 +38,7 @@ export class AuthorizationService implements IAuthorizer {
   ): Promise<Outcome<ApprovalResult>> {
     const traceId = intent.traceId?.trim();
     const approvalId = this.resolveApprovalId(subject, intent);
+    const sessionId = this.resolveSessionId(subject, intent);
     const cached = this.approvalCache.get(approvalId);
     if (cached) {
       if (traceId) {
@@ -62,6 +65,9 @@ export class AuthorizationService implements IAuthorizer {
           reason: staticCheck.reason ?? "Static policy denial",
         });
       }
+      await this.safeAuditWrite(() =>
+        this.auditService?.logApproval(approvalId, subject, false, sessionId),
+      );
       return Success({
         approvalId,
         approved: false,
@@ -76,7 +82,10 @@ export class AuthorizationService implements IAuthorizer {
           approvalId,
         });
       }
-      return this.initiateManualApproval(subject, { ...intent, approvalId });
+      await this.safeAuditWrite(() =>
+        this.auditService?.logApprovalRequested(approvalId, subject, intent, sessionId),
+      );
+      return this.initiateManualApproval(subject, { ...intent, approvalId }, sessionId);
     }
 
     if (traceId) {
@@ -85,16 +94,21 @@ export class AuthorizationService implements IAuthorizer {
         approvalId,
       });
     }
-    return Success({
+    const allowedResult = {
       approvalId,
       approved: true,
       reason: staticCheck.reason ?? "Auto-authorized",
-    });
+    } satisfies ApprovalResult;
+    await this.safeAuditWrite(() =>
+      this.auditService?.logApproval(approvalId, subject, allowedResult.approved, sessionId),
+    );
+    return Success(allowedResult);
   }
 
   private async initiateManualApproval(
     subject: AuthorizationSubject,
     intent: TaskIntent,
+    sessionId: string | undefined,
   ): Promise<Outcome<ApprovalResult>> {
     const approvalId = this.resolveApprovalId(subject, intent);
     const cached = this.approvalCache.get(approvalId);
@@ -111,6 +125,9 @@ export class AuthorizationService implements IAuthorizer {
         approverId: result.approverId,
       };
       this.approvalCache.set(approvalId, normalized);
+      await this.safeAuditWrite(() =>
+        this.auditService?.logApproval(approvalId, subject, normalized.approved, sessionId),
+      );
       return Success(normalized);
     } catch (error) {
       return Failure(`Approval flow interrupted: ${this.describeError(error)}`);
@@ -137,5 +154,39 @@ export class AuthorizationService implements IAuthorizer {
       return error.message;
     }
     return String(error);
+  }
+
+  private resolveSessionId(subject: AuthorizationSubject, intent: TaskIntent): string | undefined {
+    const intentParams =
+      intent.params && typeof intent.params === "object" && !Array.isArray(intent.params)
+        ? (intent.params as Record<string, unknown>)
+        : undefined;
+    const metadata = subject.metadata;
+    const candidates = [
+      intentParams?.sessionId,
+      intentParams?.sessionKey,
+      metadata.sessionId,
+      metadata.sessionKey,
+      metadata.SessionId,
+      metadata.SessionKey,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate !== "string") {
+        continue;
+      }
+      const normalized = candidate.trim();
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return undefined;
+  }
+
+  private async safeAuditWrite(action: () => Promise<void> | void): Promise<void> {
+    try {
+      await action();
+    } catch {
+      // Best effort only: authorization decisions must never fail on audit write.
+    }
   }
 }

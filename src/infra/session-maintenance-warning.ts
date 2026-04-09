@@ -4,7 +4,6 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { deliveryContextFromSession } from "../utils/delivery-context.js";
 import { isDeliverableMessageChannel, normalizeMessageChannel } from "../utils/message-channel.js";
-import { buildOutboundSessionContext } from "./outbound/session-context.js";
 import { enqueueSystemEvent } from "./system-events.js";
 
 type WarningParams = {
@@ -16,20 +15,20 @@ type WarningParams = {
 
 const warnedContexts = new Map<string, string>();
 const log = createSubsystemLogger("session-maintenance-warning");
-let deliverRuntimePromise: Promise<typeof import("./outbound/deliver-runtime.js")> | null = null;
+let messageRuntimePromise: Promise<typeof import("./outbound/message.js")> | null = null;
 
 function resetSessionMaintenanceWarningForTests() {
   warnedContexts.clear();
-  deliverRuntimePromise = null;
+  messageRuntimePromise = null;
 }
 
 export const __testing = {
   resetSessionMaintenanceWarningForTests,
 } as const;
 
-function loadDeliverRuntime() {
-  deliverRuntimePromise ??= import("./outbound/deliver-runtime.js");
-  return deliverRuntimePromise;
+function loadMessageRuntime() {
+  messageRuntimePromise ??= import("./outbound/message.js");
+  return messageRuntimePromise;
 }
 
 function shouldSendWarning(): boolean {
@@ -126,19 +125,17 @@ export async function deliverSessionMaintenanceWarning(params: WarningParams): P
   }
 
   try {
-    const { deliverOutboundPayloads } = await loadDeliverRuntime();
-    const outboundSession = buildOutboundSessionContext({
-      cfg: params.cfg,
-      sessionKey: params.sessionKey,
-    });
-    await deliverOutboundPayloads({
+    const { sendMessage } = await loadMessageRuntime();
+    await sendMessage({
       cfg: params.cfg,
       channel,
       to: target.to,
+      content: text,
       accountId: target.accountId,
       threadId: target.threadId,
-      payloads: [{ text }],
-      session: outboundSession,
+      mirror: {
+        sessionKey: params.sessionKey,
+      },
     });
   } catch (err) {
     log.warn(`Failed to deliver session maintenance warning: ${String(err)}`);

@@ -1,10 +1,20 @@
-export type UserRole = "guest" | "allowed" | "approver" | "owner";
+import type {
+  AuthorizationPlatform,
+  AuthorizationRole,
+  AuthorizationSubject,
+} from "../auth/Subject.js";
 
-export type AuthPlatform = "tg" | "web";
+/**
+ * @deprecated Use AuthorizationRole from domain/auth/Subject.ts.
+ */
+export type UserRole = AuthorizationRole;
 
-export interface AuthSubject {
-  readonly id: string;
-  readonly platform: AuthPlatform;
-  readonly rawIdentity: unknown;
-  readonly roles: UserRole[];
-}
+/**
+ * @deprecated Use AuthorizationPlatform from domain/auth/Subject.ts.
+ */
+export type AuthPlatform = AuthorizationPlatform;
+
+/**
+ * @deprecated Use AuthorizationSubject from domain/auth/Subject.ts.
+ */
+export type AuthSubject = AuthorizationSubject;
