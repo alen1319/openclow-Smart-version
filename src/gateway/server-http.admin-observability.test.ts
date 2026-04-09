@@ -137,7 +137,7 @@ describe("gateway http admin observability routes", () => {
 
     const response = await requestJson(port, "/admin/api/replay?traceId=test-trace-2", {
       headers: {
-        "x-openclaw-scopes": "read",
+        "x-openclaw-scopes": "operator.read",
       },
     });
     expect(response.status).toBe(403);

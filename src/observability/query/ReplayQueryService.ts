@@ -1,5 +1,9 @@
 import fs from "node:fs/promises";
 import { Failure, Success, type Outcome } from "../../core/outcome.js";
+import {
+  getStructuredMemoryRuntimeMetrics,
+  type StructuredMemoryRuntimeMetrics,
+} from "../../services/memory/StructuredMemoryMetricsRegistry.js";
 import type { AuditEvent } from "../audit/AuditService.js";
 import { getObservabilityRuntimePaths, type ObservabilityRuntimePaths } from "../runtime.js";
 import type { TraceEvent } from "../tracing/TraceProvider.js";
@@ -10,17 +14,40 @@ export type ReplayQueryParams = {
   limit?: number;
 };
 
+export type ReplayAccessPolicy =
+  | {
+      scope: "admin";
+    }
+  | {
+      scope: "operator";
+      operatorIdentity: string;
+    };
+
 export type ReplayEventView = {
   source: "trace" | "audit";
   timestamp: number;
   event: TraceEvent | AuditEvent;
 };
 
+export type ReplayMemoryView = {
+  runtimeMetrics: StructuredMemoryRuntimeMetrics | null;
+  linked: {
+    traceIds: string[];
+    sessionIds: string[];
+    traceEventCount: number;
+    auditMutationCount: number;
+    auditCleanupCount: number;
+  };
+};
+
 export type ReplayView = {
   traceId?: string;
   sessionId?: string;
+  accessScope: ReplayAccessPolicy["scope"];
+  operatorIdentity?: string;
   total: number;
   events: ReplayEventView[];
+  memory: ReplayMemoryView;
 };
 
 const DEFAULT_REPLAY_LIMIT = 500;
@@ -66,6 +93,145 @@ function resolveAuditTraceId(event: AuditEvent): string | undefined {
     return event.traceId.trim();
   }
   return undefined;
+}
+
+function extractOperatorIdentitiesFromRecord(
+  value: Record<string, unknown>,
+  identities: Set<string>,
+): void {
+  const candidates = [
+    value.subjectUid,
+    value.uid,
+    value.id,
+    value.operatorIdentity,
+    value.requesterSenderId,
+    value.senderId,
+    value.authorizationSubjectKey,
+    value.approverIdentityKey,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
+    const normalized = candidate.trim();
+    if (normalized) {
+      identities.add(normalized);
+    }
+  }
+}
+
+function resolveTraceOperatorIdentities(event: TraceEvent): Set<string> {
+  const identities = new Set<string>();
+  const detail = event.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+    return identities;
+  }
+  const record = detail as Record<string, unknown>;
+  extractOperatorIdentitiesFromRecord(record, identities);
+  const subject =
+    "subject" in record && record.subject && typeof record.subject === "object"
+      ? (record.subject as Record<string, unknown>)
+      : null;
+  if (subject) {
+    extractOperatorIdentitiesFromRecord(subject, identities);
+  }
+  return identities;
+}
+
+function resolveAuditOperatorIdentities(event: AuditEvent): Set<string> {
+  const identities = new Set<string>();
+  if ("subjectUid" in event && typeof event.subjectUid === "string" && event.subjectUid.trim()) {
+    identities.add(event.subjectUid.trim());
+  }
+  if ("subject" in event && event.subject && typeof event.subject === "object") {
+    extractOperatorIdentitiesFromRecord(event.subject as Record<string, unknown>, identities);
+  }
+  if ("detail" in event && event.detail && typeof event.detail === "object") {
+    extractOperatorIdentitiesFromRecord(event.detail as Record<string, unknown>, identities);
+  }
+  return identities;
+}
+
+function replayEventMatchesOperator(event: ReplayEventView, operatorIdentity: string): boolean {
+  if (event.source === "trace") {
+    return resolveTraceOperatorIdentities(event.event as TraceEvent).has(operatorIdentity);
+  }
+  return resolveAuditOperatorIdentities(event.event as AuditEvent).has(operatorIdentity);
+}
+
+function resolveReplayEventSessionIds(event: ReplayEventView): string[] {
+  if (event.source === "trace") {
+    const sessionId = resolveTraceSessionId(event.event as TraceEvent);
+    return sessionId ? [sessionId] : [];
+  }
+  return resolveAuditSessionIds(event.event as AuditEvent);
+}
+
+function resolveReplayEventTraceId(event: ReplayEventView): string | undefined {
+  if (event.source === "trace") {
+    return (event.event as TraceEvent).traceId;
+  }
+  return resolveAuditTraceId(event.event as AuditEvent);
+}
+
+function isMemoryTraceNode(node: string): boolean {
+  return node.toLowerCase().includes("memory");
+}
+
+function isMemoryAuditEvent(event: AuditEvent): boolean {
+  if (event.type === "MEMORY_CHANGE" || event.type === "MEMORY_CLEANUP") {
+    return true;
+  }
+  return event.type === "INVOKE_STAGE" && event.stage.toLowerCase().includes("memory");
+}
+
+function buildMemoryReplayView(events: ReplayEventView[]): ReplayMemoryView {
+  const runtimeMetrics = getStructuredMemoryRuntimeMetrics();
+  const traceIds = new Set<string>();
+  const sessionIds = new Set<string>();
+  let traceEventCount = 0;
+  let auditMutationCount = 0;
+  let auditCleanupCount = 0;
+
+  for (const entry of events) {
+    const replayTraceId = resolveReplayEventTraceId(entry);
+    if (replayTraceId) {
+      traceIds.add(replayTraceId);
+    }
+    for (const replaySessionId of resolveReplayEventSessionIds(entry)) {
+      sessionIds.add(replaySessionId);
+    }
+
+    if (entry.source === "trace") {
+      const traceEvent = entry.event as TraceEvent;
+      if (isMemoryTraceNode(traceEvent.node)) {
+        traceEventCount += 1;
+      }
+      continue;
+    }
+    const auditEvent = entry.event as AuditEvent;
+    if (!isMemoryAuditEvent(auditEvent)) {
+      continue;
+    }
+    if (auditEvent.type === "MEMORY_CHANGE") {
+      auditMutationCount += 1;
+      continue;
+    }
+    if (auditEvent.type === "MEMORY_CLEANUP") {
+      auditCleanupCount += 1;
+    }
+  }
+
+  return {
+    runtimeMetrics,
+    linked: {
+      traceIds: [...traceIds].toSorted(),
+      sessionIds: [...sessionIds].toSorted(),
+      traceEventCount,
+      auditMutationCount,
+      auditCleanupCount,
+    },
+  };
 }
 
 async function readJsonLines<T>(
@@ -133,21 +299,31 @@ function parseAuditEvent(line: unknown): AuditEvent | undefined {
 
 export async function queryObservabilityReplay(
   params: ReplayQueryParams,
-  options: { paths?: ObservabilityRuntimePaths | null } = {},
+  options: { paths?: ObservabilityRuntimePaths | null; access?: ReplayAccessPolicy } = {},
 ): Promise<Outcome<ReplayView>> {
   const traceId = normalizeOptional(params.traceId);
   const sessionId = normalizeOptional(params.sessionId);
   if (!traceId && !sessionId) {
     return Failure("traceId or sessionId is required");
   }
+  const access = options.access ?? { scope: "admin" as const };
+  const operatorIdentity =
+    access.scope === "operator" ? normalizeOptional(access.operatorIdentity) : undefined;
+  if (access.scope === "operator" && !operatorIdentity) {
+    return Failure("operatorIdentity is required for operator replay access");
+  }
   const limit = resolveLimit(params.limit);
   const paths = options.paths ?? getObservabilityRuntimePaths();
   if (!paths) {
+    const emptyTimeline: ReplayEventView[] = [];
     return Success({
       traceId,
       sessionId,
+      accessScope: access.scope,
+      operatorIdentity,
       total: 0,
-      events: [],
+      events: emptyTimeline,
+      memory: buildMemoryReplayView(emptyTimeline),
     });
   }
 
@@ -190,7 +366,7 @@ export async function queryObservabilityReplay(
     return eventSessionIds.some((candidate) => relatedSessionIds.has(candidate));
   });
 
-  const timeline: ReplayEventView[] = [
+  let timeline: ReplayEventView[] = [
     ...matchedTrace.map((event) => ({
       source: "trace" as const,
       timestamp: event.timestamp,
@@ -203,12 +379,47 @@ export async function queryObservabilityReplay(
     })),
   ].toSorted((left, right) => left.timestamp - right.timestamp);
 
+  if (access.scope === "operator" && operatorIdentity) {
+    const matchedOperatorTimeline = timeline.filter((event) =>
+      replayEventMatchesOperator(event, operatorIdentity),
+    );
+    if (matchedOperatorTimeline.length === 0) {
+      return Failure("forbidden: replay does not match operator identity");
+    }
+    const operatorTraceIds = new Set<string>();
+    const operatorSessionIds = new Set<string>();
+    for (const event of matchedOperatorTimeline) {
+      const replayTraceId = resolveReplayEventTraceId(event);
+      if (replayTraceId) {
+        operatorTraceIds.add(replayTraceId);
+      }
+      for (const replaySessionId of resolveReplayEventSessionIds(event)) {
+        operatorSessionIds.add(replaySessionId);
+      }
+    }
+    timeline = timeline.filter((event) => {
+      if (replayEventMatchesOperator(event, operatorIdentity)) {
+        return true;
+      }
+      const replayTraceId = resolveReplayEventTraceId(event);
+      if (replayTraceId && operatorTraceIds.has(replayTraceId)) {
+        return true;
+      }
+      return resolveReplayEventSessionIds(event).some((candidate) =>
+        operatorSessionIds.has(candidate),
+      );
+    });
+  }
+
   const total = timeline.length;
   const events = timeline.slice(Math.max(0, total - limit));
   return Success({
     traceId,
     sessionId,
+    accessScope: access.scope,
+    operatorIdentity,
     total,
     events,
+    memory: buildMemoryReplayView(events),
   });
 }

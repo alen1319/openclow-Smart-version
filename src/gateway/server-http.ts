@@ -65,10 +65,11 @@ import { sendGatewayAuthFailure, setDefaultSecurityHeaders } from "./http-common
 import {
   authorizeGatewayHttpRequestOrReply,
   getBearerToken,
+  resolveHttpAuthorizationIdentity,
   resolveOpenAiCompatibleHttpOperatorScopes,
   resolveHttpBrowserOriginPolicy,
 } from "./http-utils.js";
-import { ADMIN_SCOPE } from "./method-scopes.js";
+import { ADMIN_SCOPE, READ_SCOPE } from "./method-scopes.js";
 import { handleOpenAiModelsHttpRequest } from "./models-http.js";
 import { resolveRequestClientIp } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
@@ -835,11 +836,8 @@ export function createGatewayHttpServer(opts: {
             if (!requestAuth) {
               return true;
             }
-            if (
-              requestPath === "/admin/api/replay" ||
-              requestPath === "/admin/api/memory/runtime"
-            ) {
-              const requestedScopes = resolveOpenAiCompatibleHttpOperatorScopes(req, requestAuth);
+            const requestedScopes = resolveOpenAiCompatibleHttpOperatorScopes(req, requestAuth);
+            if (requestPath === "/admin/api/memory/runtime") {
               if (!requestedScopes.includes(ADMIN_SCOPE)) {
                 sendJson(res, 403, {
                   ok: false,
@@ -850,14 +848,38 @@ export function createGatewayHttpServer(opts: {
                 });
                 return true;
               }
-            }
-            if (requestPath === "/admin/api/replay") {
-              return await handleAdminReplayLookupHttp(req, res);
-            }
-            if (requestPath === "/admin/api/memory/runtime") {
               return handleAdminMemoryRuntimeMetricsHttp(req, res);
             }
-            return handleAdminTraceLookupHttp(req, res);
+            const authorizationIdentity = resolveHttpAuthorizationIdentity({
+              req,
+              senderIsApprover: requestedScopes.includes(ADMIN_SCOPE),
+            });
+            const operatorIdentity =
+              authorizationIdentity.authorizationSubjectKey ??
+              authorizationIdentity.approverIdentityKey ??
+              authorizationIdentity.requesterSenderId;
+            const access = requestedScopes.includes(ADMIN_SCOPE)
+              ? ({ scope: "admin" } as const)
+              : requestedScopes.includes(READ_SCOPE) && operatorIdentity
+                ? ({
+                    scope: "operator",
+                    operatorIdentity,
+                  } as const)
+                : null;
+            if (!access) {
+              sendJson(res, 403, {
+                ok: false,
+                error: {
+                  type: "forbidden",
+                  message: `missing scope: ${ADMIN_SCOPE} or ${READ_SCOPE} with operator identity`,
+                },
+              });
+              return true;
+            }
+            if (requestPath === "/admin/api/replay") {
+              return await handleAdminReplayLookupHttp(req, res, { access });
+            }
+            return handleAdminTraceLookupHttp(req, res, { access });
           },
         },
         {

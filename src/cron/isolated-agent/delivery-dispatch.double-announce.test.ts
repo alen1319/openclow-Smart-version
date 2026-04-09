@@ -24,8 +24,8 @@ vi.mock("../../agents/subagent-registry-read.js", () => ({
   countActiveDescendantRuns: vi.fn().mockReturnValue(0),
 }));
 
-vi.mock("../../infra/outbound/deliver.js", () => ({
-  deliverOutboundPayloads: vi.fn().mockResolvedValue([{ ok: true }]),
+vi.mock("../../infra/outbound/message.js", () => ({
+  sendReplyPayloads: vi.fn().mockResolvedValue([{ ok: true }]),
 }));
 
 vi.mock("../../infra/outbound/identity.js", () => ({
@@ -66,7 +66,7 @@ vi.mock("./subagent-followup.runtime.js", () => ({
 // Import after mocks
 import { countActiveDescendantRuns } from "../../agents/subagent-registry-read.js";
 import { callGateway } from "../../gateway/call.runtime.js";
-import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
+import { sendReplyPayloads } from "../../infra/outbound/message.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { shouldEnqueueCronMainSummary } from "../heartbeat-policy.js";
 import {
@@ -194,7 +194,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     ).toBe(false);
 
     // No announce should have been attempted (subagents still running)
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(sendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("early return (stale interim suppression) sets deliveryAttempted=true so timer skips enqueueSystemEvent", async () => {
@@ -226,7 +226,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     ).toBe(false);
 
     // No direct delivery should have been sent (stale interim suppressed)
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(sendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("consolidates descendant output into the final direct delivery", async () => {
@@ -241,8 +241,8 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
     expect(state.deliveryAttempted).toBe(true);
     expect(state.delivered).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
-    expect(deliverOutboundPayloads).toHaveBeenCalledWith(
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "telegram",
         to: "123456",
@@ -253,9 +253,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
         ],
       }),
     );
-    expect(deliverOutboundPayloads).toHaveBeenCalledWith(
-      expect.objectContaining({ skipQueue: true }),
-    );
+    expect(sendReplyPayloads).toHaveBeenCalledWith(expect.objectContaining({ skipQueue: true }));
   });
 
   it("normal text delivery sends exactly once and sets deliveryAttempted=true", async () => {
@@ -267,7 +265,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
     expect(state.deliveryAttempted).toBe(true);
     expect(state.delivered).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
 
     // Timer should not fire enqueueSystemEvent (delivered=true)
     expect(
@@ -292,7 +290,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(state.result).toBeUndefined();
     expect(state.delivered).toBe(true);
     expect(state.deliveryAttempted).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEvent).toHaveBeenCalledWith("Morning briefing complete.", {
       sessionKey: "agent:main:main",
       contextKey: "cron-direct-delivery:v1:run-123:telegram::123456:",
@@ -312,7 +310,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(state.result).toBeUndefined();
     expect(state.delivered).toBe(true);
     expect(state.deliveryAttempted).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
   });
 
   it("skips main-session awareness for session-bound cron jobs", async () => {
@@ -328,7 +326,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(state.result).toBeUndefined();
     expect(state.delivered).toBe(true);
     expect(state.deliveryAttempted).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEvent).not.toHaveBeenCalled();
   });
 
@@ -345,7 +343,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(state.result).toBeUndefined();
     expect(state.delivered).toBe(true);
     expect(state.deliveryAttempted).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEvent).not.toHaveBeenCalled();
   });
 
@@ -369,7 +367,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
         deliveryAttempted: true,
       }),
     );
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(sendReplyPayloads).not.toHaveBeenCalled();
     expect(
       shouldEnqueueCronMainSummary({
         summaryText: "Yesterday's morning briefing.",
@@ -387,7 +385,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     vi.setSystemTime(new Date("2026-03-18T17:00:00.000Z"));
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads).mockResolvedValue([{ ok: true } as never]);
+    vi.mocked(sendReplyPayloads).mockResolvedValue([{ ok: true } as never]);
 
     const params = makeBaseParams({ synthesizedText: "Long running report finished." });
     params.runStartedAt = Date.now() - (3 * 60 * 60_000 + 1);
@@ -397,7 +395,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
     const state = await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
     expect(state.delivered).toBe(true);
     expect(state.deliveryAttempted).toBe(true);
   });
@@ -417,7 +415,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
         delivered: false,
       }),
     );
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(sendReplyPayloads).not.toHaveBeenCalled();
     expect(callGateway).toHaveBeenCalledWith({
       method: "sessions.delete",
       params: {
@@ -432,7 +430,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
   it("text delivery fires exactly once (no double-deliver)", async () => {
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads).mockResolvedValue([{ ok: true } as never]);
+    vi.mocked(sendReplyPayloads).mockResolvedValue([{ ok: true } as never]);
 
     const params = makeBaseParams({ synthesizedText: "Briefing ready." });
     const state = await dispatchCronDelivery(params);
@@ -441,14 +439,14 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(state.deliveryAttempted).toBe(true);
     expect(state.delivered).toBe(true);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
   });
 
   it("retries transient direct announce failures before succeeding", async () => {
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads)
+    vi.mocked(sendReplyPayloads)
       .mockRejectedValueOnce(new Error("ECONNRESET while sending"))
       .mockResolvedValueOnce([{ ok: true } as never]);
 
@@ -458,13 +456,13 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(state.result).toBeUndefined();
     expect(state.deliveryAttempted).toBe(true);
     expect(state.delivered).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(2);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(2);
   });
 
   it("keeps direct announce delivery idempotent across replay for the same run session", async () => {
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads).mockResolvedValue([{ ok: true } as never]);
+    vi.mocked(sendReplyPayloads).mockResolvedValue([{ ok: true } as never]);
 
     const params = makeBaseParams({ synthesizedText: "Replay-safe cron update." });
     const first = await dispatchCronDelivery(params);
@@ -473,13 +471,13 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(first.delivered).toBe(true);
     expect(second.delivered).toBe(true);
     expect(second.deliveryAttempted).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
   });
 
   it("does not cache partial bestEffort delivery replays as delivered", async () => {
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads).mockImplementation(async (params) => {
+    vi.mocked(sendReplyPayloads).mockImplementation(async (params) => {
       const failedPayload = Array.isArray(params.payloads) ? params.payloads[0] : undefined;
       params.onError?.(new Error("payload failed"), failedPayload as never);
       return [{ ok: true } as never];
@@ -496,13 +494,13 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
     expect(first.delivered).toBe(false);
     expect(second.delivered).toBe(false);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(2);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(2);
   });
 
   it("prunes the completed-delivery cache back to the entry cap", async () => {
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads).mockResolvedValue([{ ok: true } as never]);
+    vi.mocked(sendReplyPayloads).mockResolvedValue([{ ok: true } as never]);
 
     for (let i = 0; i < 2003; i += 1) {
       const params = makeBaseParams({
@@ -520,12 +518,12 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads).mockRejectedValue(new Error("chat not found"));
+    vi.mocked(sendReplyPayloads).mockRejectedValue(new Error("chat not found"));
 
     const params = makeBaseParams({ synthesizedText: "This should fail once." });
     const state = await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
     expect(state.result).toEqual(
       expect.objectContaining({
         status: "error",
@@ -542,23 +540,23 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     });
     const state = await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(sendReplyPayloads).not.toHaveBeenCalled();
     expect(state.deliveryAttempted).toBe(false);
   });
 
   it("text delivery always bypasses the write-ahead queue", async () => {
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads).mockResolvedValue([{ ok: true } as never]);
+    vi.mocked(sendReplyPayloads).mockResolvedValue([{ ok: true } as never]);
 
     const params = makeBaseParams({ synthesizedText: "Daily digest ready." });
     const state = await dispatchCronDelivery(params);
 
     expect(state.delivered).toBe(true);
     expect(state.deliveryAttempted).toBe(true);
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledWith(
+    expect(sendReplyPayloads).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "telegram",
         to: "123456",
@@ -571,17 +569,15 @@ describe("dispatchCronDelivery — double-announce guard", () => {
   it("structured/thread delivery also bypasses the write-ahead queue", async () => {
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
-    vi.mocked(deliverOutboundPayloads).mockResolvedValue([{ ok: true } as never]);
+    vi.mocked(sendReplyPayloads).mockResolvedValue([{ ok: true } as never]);
 
     const params = makeBaseParams({ synthesizedText: "Report attached." });
     // Simulate structured content so useDirectDelivery path is taken (no retryTransient)
     (params as Record<string, unknown>).deliveryPayloadHasStructuredContent = true;
     await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
-    expect(deliverOutboundPayloads).toHaveBeenCalledWith(
-      expect.objectContaining({ skipQueue: true }),
-    );
+    expect(sendReplyPayloads).toHaveBeenCalledTimes(1);
+    expect(sendReplyPayloads).toHaveBeenCalledWith(expect.objectContaining({ skipQueue: true }));
   });
 
   it("transient retry delivers exactly once with skipQueue on both attempts", async () => {
@@ -589,7 +585,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
 
     // First call throws a transient error, second call succeeds.
-    vi.mocked(deliverOutboundPayloads)
+    vi.mocked(sendReplyPayloads)
       .mockRejectedValueOnce(new Error("gateway timeout"))
       .mockResolvedValueOnce([{ ok: true } as never]);
 
@@ -601,9 +597,9 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       expect(state.delivered).toBe(true);
       expect(state.deliveryAttempted).toBe(true);
       // Two calls total: first failed transiently, second succeeded.
-      expect(deliverOutboundPayloads).toHaveBeenCalledTimes(2);
+      expect(sendReplyPayloads).toHaveBeenCalledTimes(2);
 
-      const calls = vi.mocked(deliverOutboundPayloads).mock.calls;
+      const calls = vi.mocked(sendReplyPayloads).mock.calls;
       expect(calls[0][0]).toEqual(expect.objectContaining({ skipQueue: true }));
       expect(calls[1][0]).toEqual(expect.objectContaining({ skipQueue: true }));
     } finally {
@@ -622,7 +618,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     const state = await dispatchCronDelivery(params);
 
     // NO_REPLY must be filtered out before reaching the outbound adapter.
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(sendReplyPayloads).not.toHaveBeenCalled();
     expect(state.result).toEqual(
       expect.objectContaining({
         status: "ok",
@@ -655,7 +651,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     (params as Record<string, unknown>).deliveryPayloadHasStructuredContent = true;
     const state = await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(sendReplyPayloads).not.toHaveBeenCalled();
     expect(state.result).toEqual(
       expect.objectContaining({
         status: "ok",
@@ -684,7 +680,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     const params = makeBaseParams({ synthesizedText: "No_Reply" });
     const state = await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(sendReplyPayloads).not.toHaveBeenCalled();
     expect(state.result).toEqual(
       expect.objectContaining({
         status: "ok",

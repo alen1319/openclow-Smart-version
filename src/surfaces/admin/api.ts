@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Failure, Success, type Outcome } from "../../core/outcome.js";
 import {
   queryObservabilityReplay,
+  type ReplayAccessPolicy,
   type ReplayQueryParams,
   type ReplayView,
 } from "../../observability/query/ReplayQueryService.js";
@@ -46,20 +47,71 @@ function parsePositiveLimit(value: string | null): number | undefined {
   return parsed;
 }
 
-export function getTraceDiagnostics(traceId: string): Outcome<TraceDiagnosticsView> {
+function resolveTraceEventOperatorIdentities(
+  event: ReturnType<typeof TraceProvider.getTrace>[number],
+): Set<string> {
+  const identities = new Set<string>();
+  if (!event.detail || typeof event.detail !== "object" || Array.isArray(event.detail)) {
+    return identities;
+  }
+  const detail = event.detail as Record<string, unknown>;
+  const candidates = [
+    detail.subjectUid,
+    detail.uid,
+    detail.id,
+    detail.operatorIdentity,
+    detail.requesterSenderId,
+    detail.senderId,
+    detail.authorizationSubjectKey,
+    detail.approverIdentityKey,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
+    const normalized = candidate.trim();
+    if (normalized) {
+      identities.add(normalized);
+    }
+  }
+  return identities;
+}
+
+function resolveTraceLookupStatusCode(error: Error): number {
+  return error.message.toLowerCase().startsWith("forbidden") ? 403 : 400;
+}
+
+export function getTraceDiagnostics(
+  traceId: string,
+  options: { access?: ReplayAccessPolicy } = {},
+): Outcome<TraceDiagnosticsView> {
   const normalized = traceId.trim();
   if (!normalized) {
     return Failure("traceId is required");
   }
+  const access = options.access ?? { scope: "admin" as const };
+  const allSteps = TraceProvider.getTrace(normalized);
+  if (access.scope === "operator") {
+    const operatorIdentity = access.operatorIdentity.trim();
+    if (!operatorIdentity) {
+      return Failure("operatorIdentity is required for operator trace access");
+    }
+    const visible = allSteps.filter((step) =>
+      resolveTraceEventOperatorIdentities(step).has(operatorIdentity),
+    );
+    if (visible.length === 0) {
+      return Failure("forbidden: trace does not match operator identity");
+    }
+  }
   return Success({
     traceId: normalized,
-    steps: TraceProvider.getTrace(normalized),
+    steps: allSteps,
   });
 }
 
 export async function getReplayDiagnostics(
   params: ReplayQueryParams,
-  options: { paths?: ObservabilityRuntimePaths | null } = {},
+  options: { paths?: ObservabilityRuntimePaths | null; access?: ReplayAccessPolicy } = {},
 ): Promise<Outcome<ReplayView>> {
   return await queryObservabilityReplay(
     {
@@ -88,7 +140,11 @@ export function createAdminApi(deps: AdminSurfaceDeps) {
   };
 }
 
-export function handleAdminTraceLookupHttp(req: IncomingMessage, res: ServerResponse): boolean {
+export function handleAdminTraceLookupHttp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: { access?: ReplayAccessPolicy } = {},
+): boolean {
   const url = req.url ?? "";
   if (!url.startsWith("/admin/api/trace")) {
     return false;
@@ -96,9 +152,9 @@ export function handleAdminTraceLookupHttp(req: IncomingMessage, res: ServerResp
 
   const query = url.includes("?") ? url.slice(url.indexOf("?")) : "";
   const params = new URLSearchParams(query);
-  const result = getTraceDiagnostics(params.get("traceId") ?? "");
+  const result = getTraceDiagnostics(params.get("traceId") ?? "", options);
   if (!result.success) {
-    sendJson(res, 400, result);
+    sendJson(res, resolveTraceLookupStatusCode(result.error), result);
     return true;
   }
   sendJson(res, 200, result);
@@ -108,7 +164,7 @@ export function handleAdminTraceLookupHttp(req: IncomingMessage, res: ServerResp
 export async function handleAdminReplayLookupHttp(
   req: IncomingMessage,
   res: ServerResponse,
-  options: { paths?: ObservabilityRuntimePaths | null } = {},
+  options: { paths?: ObservabilityRuntimePaths | null; access?: ReplayAccessPolicy } = {},
 ): Promise<boolean> {
   const url = req.url ?? "";
   if (!url.startsWith("/admin/api/replay")) {
@@ -126,7 +182,7 @@ export async function handleAdminReplayLookupHttp(
     options,
   );
   if (!result.success) {
-    sendJson(res, 400, result);
+    sendJson(res, resolveTraceLookupStatusCode(result.error), result);
     return true;
   }
   sendJson(res, 200, result);

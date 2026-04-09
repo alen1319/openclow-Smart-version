@@ -34,7 +34,6 @@ export {
   setSessionRuntimeModel,
   updateSessionStore,
 } from "../../config/sessions.js";
-export { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 export { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
 export { logWarn } from "../../logger.js";
 export { buildAgentMainSessionKey, normalizeAgentId } from "../../routing/session-key.js";

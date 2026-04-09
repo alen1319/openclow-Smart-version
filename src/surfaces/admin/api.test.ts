@@ -40,7 +40,7 @@ afterEach(async () => {
 
 describe("admin surface api", () => {
   it("returns in-memory trace diagnostics for a traceId", () => {
-    TraceProvider.record("trace-admin-1", "gateway.entry", { ok: true });
+    TraceProvider.record("trace-admin-1", "gateway.entry", { ok: true, subjectUid: "user-1" });
 
     const result = getTraceDiagnostics("trace-admin-1");
     expect(result.success).toBe(true);
@@ -49,6 +49,25 @@ describe("admin surface api", () => {
     }
     expect(result.data.traceId).toBe("trace-admin-1");
     expect(result.data.steps).toHaveLength(1);
+  });
+
+  it("enforces operator identity access for trace diagnostics", () => {
+    TraceProvider.record("trace-admin-identity-1", "gateway.entry", {
+      ok: true,
+      subjectUid: "user-99",
+    });
+    const denied = getTraceDiagnostics("trace-admin-identity-1", {
+      access: { scope: "operator", operatorIdentity: "user-42" },
+    });
+    expect(denied.success).toBe(false);
+    if (!denied.success) {
+      expect(denied.error.message).toContain("forbidden");
+    }
+
+    const allowed = getTraceDiagnostics("trace-admin-identity-1", {
+      access: { scope: "operator", operatorIdentity: "user-99" },
+    });
+    expect(allowed.success).toBe(true);
   });
 
   it("returns replay diagnostics merged from trace and audit sinks", async () => {
@@ -75,7 +94,10 @@ describe("admin surface api", () => {
       "utf8",
     );
 
-    const replay = await getReplayDiagnostics({ traceId: "trace-admin-2" }, { paths });
+    const replay = await getReplayDiagnostics(
+      { traceId: "trace-admin-2" },
+      { paths, access: { scope: "admin" } },
+    );
     expect(replay.success).toBe(true);
     if (!replay.success) {
       return;
