@@ -4,7 +4,11 @@ import type { ResolvedGatewayAuth } from "./auth.js";
 import { createGatewayHttpServer } from "./server-http.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 
-async function requestJson(port: number, path: string): Promise<{ status: number; body: unknown }> {
+async function requestJson(
+  port: number,
+  path: string,
+  options: { headers?: Record<string, string> } = {},
+): Promise<{ status: number; body: unknown }> {
   return await new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -12,6 +16,7 @@ async function requestJson(port: number, path: string): Promise<{ status: number
         port,
         path,
         method: "GET",
+        headers: options.headers,
       },
       (res) => {
         let payload = "";
@@ -106,5 +111,74 @@ describe("gateway http admin observability routes", () => {
     const response = await requestJson(port, "/admin/api/replay");
     expect(response.status).toBe(400);
     expect(response.body).toEqual(expect.objectContaining({ success: false }));
+  });
+
+  it("rejects replay diagnostics when admin scope is missing", async () => {
+    const clients = new Set<GatewayWsClient>();
+    const resolvedAuth: ResolvedGatewayAuth = { mode: "none", allowTailscale: false };
+    const server = createGatewayHttpServer({
+      canvasHost: null,
+      clients,
+      controlUiEnabled: false,
+      controlUiBasePath: "/__control__",
+      openAiChatCompletionsEnabled: false,
+      openResponsesEnabled: false,
+      handleHooksRequest: async () => false,
+      resolvedAuth,
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    closeServer = async () =>
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    const response = await requestJson(port, "/admin/api/replay?traceId=test-trace-2", {
+      headers: {
+        "x-openclaw-scopes": "read",
+      },
+    });
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          type: "forbidden",
+        }),
+      }),
+    );
+  });
+
+  it("serves structured memory runtime metrics on /admin/api/memory/runtime", async () => {
+    const clients = new Set<GatewayWsClient>();
+    const resolvedAuth: ResolvedGatewayAuth = { mode: "none", allowTailscale: false };
+    const server = createGatewayHttpServer({
+      canvasHost: null,
+      clients,
+      controlUiEnabled: false,
+      controlUiBasePath: "/__control__",
+      openAiChatCompletionsEnabled: false,
+      openResponsesEnabled: false,
+      handleHooksRequest: async () => false,
+      resolvedAuth,
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    closeServer = async () =>
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    const response = await requestJson(port, "/admin/api/memory/runtime");
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        success: true,
+      }),
+    );
   });
 });

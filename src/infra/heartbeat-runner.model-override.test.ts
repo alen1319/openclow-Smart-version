@@ -8,8 +8,8 @@ import {
   withTempHeartbeatSandbox,
 } from "./heartbeat-runner.test-utils.js";
 
-vi.mock("./outbound/deliver.js", () => ({
-  deliverOutboundPayloads: vi.fn().mockResolvedValue(undefined),
+vi.mock("./outbound/message.js", () => ({
+  sendReplyPayloads: vi.fn().mockResolvedValue(undefined),
 }));
 
 type SeedSessionInput = {

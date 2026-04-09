@@ -72,6 +72,7 @@ const runtimeMocks = vi.hoisted(() => ({
   defaultRuntime: {},
   deleteMediaBuffer: vi.fn(async () => {}),
   deliverOutboundPayloads: vi.fn(async () => {}),
+  sendReplyPayloads: vi.fn(async () => []),
   enqueueSystemEvent: vi.fn(),
   formatForLog: vi.fn((err: unknown) => (err instanceof Error ? err.message : String(err))),
   loadConfig: vi.fn(() => ({ session: { mainKey: "agent:main:main" } })),

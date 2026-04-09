@@ -13,7 +13,7 @@ import {
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 
 const mocks = vi.hoisted(() => ({
-  deliverOutboundPayloads: vi.fn(),
+  sendReplyPayloads: vi.fn(),
 }));
 
 vi.mock("../../infra/outbound/deliver-runtime.js", async () => {
@@ -22,7 +22,7 @@ vi.mock("../../infra/outbound/deliver-runtime.js", async () => {
   );
   return {
     ...actual,
-    deliverOutboundPayloads: mocks.deliverOutboundPayloads,
+    sendReplyPayloads: mocks.sendReplyPayloads,
   };
 });
 
@@ -68,16 +68,16 @@ function createChannelPlugin(
 }
 
 function expectLastDelivery(
-  matcher: Partial<Parameters<(typeof mocks.deliverOutboundPayloads.mock.calls)[number][0]>[0]>,
+  matcher: Partial<Parameters<(typeof mocks.sendReplyPayloads.mock.calls)[number][0]>[0]>,
 ) {
-  expect(mocks.deliverOutboundPayloads).toHaveBeenLastCalledWith(expect.objectContaining(matcher));
+  expect(mocks.sendReplyPayloads).toHaveBeenLastCalledWith(expect.objectContaining(matcher));
 }
 
 async function expectSlackNoDelivery(
   payload: Parameters<typeof routeReply>[0]["payload"],
   overrides: Partial<Parameters<typeof routeReply>[0]> = {},
 ) {
-  mocks.deliverOutboundPayloads.mockClear();
+  mocks.sendReplyPayloads.mockClear();
   const res = await routeReply({
     payload,
     channel: "slack",
@@ -86,7 +86,7 @@ async function expectSlackNoDelivery(
     ...overrides,
   });
   expect(res.ok).toBe(true);
-  expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
+  expect(mocks.sendReplyPayloads).not.toHaveBeenCalled();
   return res;
 }
 
@@ -140,8 +140,8 @@ describe("routeReply", () => {
         },
       ]),
     );
-    mocks.deliverOutboundPayloads.mockReset();
-    mocks.deliverOutboundPayloads.mockResolvedValue([]);
+    mocks.sendReplyPayloads.mockReset();
+    mocks.sendReplyPayloads.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -160,7 +160,7 @@ describe("routeReply", () => {
     });
     expect(res.ok).toBe(false);
     expect(res.error).toContain("aborted");
-    expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mocks.sendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("no-ops on empty payload", async () => {
@@ -226,15 +226,7 @@ describe("routeReply", () => {
     expectLastDelivery({
       payloads: [
         expect.objectContaining({
-          text: undefined,
-          interactive: {
-            blocks: [
-              expect.objectContaining({
-                type: "select",
-                placeholder: "Choose one",
-              }),
-            ],
-          },
+          text: "[[slack_select: Choose one | Alpha:alpha]]",
         }),
       ],
     });
@@ -286,7 +278,7 @@ describe("routeReply", () => {
     expectLastDelivery({
       channel: "slack",
       replyToId: "456.789",
-      threadId: null,
+      threadId: undefined,
     });
   });
 
@@ -352,7 +344,7 @@ describe("routeReply", () => {
       to: "channel:C123",
       cfg: {} as never,
     });
-    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(mocks.sendReplyPayloads).toHaveBeenCalledTimes(1);
     expectLastDelivery({
       channel: "slack",
       to: "channel:C123",
@@ -376,7 +368,7 @@ describe("routeReply", () => {
     expectLastDelivery({
       channel: "slack",
       replyToId: "1710000000.0001",
-      threadId: null,
+      threadId: undefined,
     });
   });
 
@@ -391,7 +383,7 @@ describe("routeReply", () => {
     expectLastDelivery({
       channel: "slack",
       replyToId: "1710000000.9999",
-      threadId: null,
+      threadId: undefined,
     });
   });
 
@@ -414,7 +406,7 @@ describe("routeReply", () => {
     expectLastDelivery({
       channel: "mattermost",
       to: "channel:CHAN1",
-      replyToId: "post-root",
+      replyToId: undefined,
       threadId: "post-root",
     });
   });

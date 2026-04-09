@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MemoryScopeType } from "../../domain/memory/Scope.js";
+import {
+  getStructuredMemoryRuntimeMetrics,
+  resetStructuredMemoryRuntimeMetricsForTests,
+} from "./StructuredMemoryMetricsRegistry.js";
 import { StructuredMemoryStorage } from "./StructuredMemoryStorage.js";
 
 const tempDirs: string[] = [];
@@ -14,6 +18,7 @@ async function makeTempDir(testName: string): Promise<string> {
 }
 
 afterEach(async () => {
+  resetStructuredMemoryRuntimeMetricsForTests();
   await Promise.all(
     tempDirs.splice(0, tempDirs.length).map(async (dir) => {
       await fs.rm(dir, { recursive: true, force: true });
@@ -166,5 +171,46 @@ describe("StructuredMemoryStorage", () => {
       now: () => now,
     });
     await expect(reloaded.find(MemoryScopeType.SESSION, "sess-expiry")).resolves.toHaveLength(0);
+  });
+
+  it("publishes runtime metrics for shard entries, lock waits, and cleanup duration", async () => {
+    const dir = await makeTempDir("metrics");
+    const rootDir = path.join(dir, "memory-shards");
+    const storage = new StructuredMemoryStorage({
+      rootDir,
+      shardCount: 4,
+      logger: () => {},
+    });
+
+    await storage.save({
+      key: "persist_profile",
+      value: "alice",
+      scope: MemoryScopeType.USER,
+      ownerId: "user-1",
+      updatedAt: 10,
+      expiresAt: 2_000,
+    });
+    await storage.save({
+      key: "runtime_temp",
+      value: "draft",
+      scope: MemoryScopeType.SESSION,
+      ownerId: "sess-1",
+      updatedAt: 11,
+      expiresAt: 1_000,
+    });
+    await storage.deleteExpired(1_500);
+
+    const metrics = storage.getRuntimeMetrics();
+    expect(metrics.shardCount).toBe(4);
+    expect(metrics.totalEntries).toBe(1);
+    expect(metrics.shardEntryCounts).toHaveLength(4);
+    expect(metrics.lockWait.samples).toBeGreaterThan(0);
+    expect(metrics.cleanup.runs).toBe(1);
+    expect(metrics.cleanup.lastDeletedEntries).toBe(1);
+    expect(metrics.cleanup.lastDurationMs).toBeGreaterThanOrEqual(0);
+
+    const published = getStructuredMemoryRuntimeMetrics();
+    expect(published).not.toBeNull();
+    expect(published?.totalEntries).toBe(metrics.totalEntries);
   });
 });

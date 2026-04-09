@@ -16,7 +16,11 @@ import { loadConfig } from "../config/config.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveHookExternalContentSource as resolveHookExternalContentSourceFromSession } from "../security/external-content.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
-import { handleAdminReplayLookupHttp, handleAdminTraceLookupHttp } from "../surfaces/admin/api.js";
+import {
+  handleAdminMemoryRuntimeMetricsHttp,
+  handleAdminReplayLookupHttp,
+  handleAdminTraceLookupHttp,
+} from "../surfaces/admin/api.js";
 import {
   AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH,
   createAuthRateLimiter,
@@ -61,8 +65,10 @@ import { sendGatewayAuthFailure, setDefaultSecurityHeaders } from "./http-common
 import {
   authorizeGatewayHttpRequestOrReply,
   getBearerToken,
+  resolveOpenAiCompatibleHttpOperatorScopes,
   resolveHttpBrowserOriginPolicy,
 } from "./http-utils.js";
+import { ADMIN_SCOPE } from "./method-scopes.js";
 import { handleOpenAiModelsHttpRequest } from "./models-http.js";
 import { resolveRequestClientIp } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
@@ -811,7 +817,11 @@ export function createGatewayHttpServer(opts: {
         {
           name: "admin-observability",
           run: async () => {
-            if (requestPath !== "/admin/api/trace" && requestPath !== "/admin/api/replay") {
+            if (
+              requestPath !== "/admin/api/trace" &&
+              requestPath !== "/admin/api/replay" &&
+              requestPath !== "/admin/api/memory/runtime"
+            ) {
               return false;
             }
             const requestAuth = await authorizeGatewayHttpRequestOrReply({
@@ -825,8 +835,27 @@ export function createGatewayHttpServer(opts: {
             if (!requestAuth) {
               return true;
             }
+            if (
+              requestPath === "/admin/api/replay" ||
+              requestPath === "/admin/api/memory/runtime"
+            ) {
+              const requestedScopes = resolveOpenAiCompatibleHttpOperatorScopes(req, requestAuth);
+              if (!requestedScopes.includes(ADMIN_SCOPE)) {
+                sendJson(res, 403, {
+                  ok: false,
+                  error: {
+                    type: "forbidden",
+                    message: `missing scope: ${ADMIN_SCOPE}`,
+                  },
+                });
+                return true;
+              }
+            }
             if (requestPath === "/admin/api/replay") {
               return await handleAdminReplayLookupHttp(req, res);
+            }
+            if (requestPath === "/admin/api/memory/runtime") {
+              return handleAdminMemoryRuntimeMetricsHttp(req, res);
             }
             return handleAdminTraceLookupHttp(req, res);
           },

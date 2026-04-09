@@ -4,8 +4,8 @@ import type { CliDeps } from "../cli/deps.js";
 import { resolveMainSessionKeyFromConfig } from "../config/sessions.js";
 import { parseSessionThreadInfo } from "../config/sessions/delivery-info.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
-import { deliverOutboundPayloads } from "../infra/outbound/deliver.js";
 import { ackDelivery, enqueueDelivery, failDelivery } from "../infra/outbound/delivery-queue.js";
+import { sendReplyPayloads } from "../infra/outbound/message.js";
 import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
 import { resolveOutboundTarget } from "../infra/outbound/targets.js";
 import {
@@ -73,7 +73,7 @@ async function deliverRestartSentinelNotice(params: {
   }).catch(() => null);
   for (let attempt = 1; attempt <= OUTBOUND_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const results = await deliverOutboundPayloads({
+      const results = await sendReplyPayloads({
         cfg: params.cfg,
         channel: params.channel,
         to: params.to,

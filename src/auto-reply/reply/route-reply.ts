@@ -169,25 +169,25 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
   const resolvedReplyToId = replyTransport?.replyToId ?? replyToId ?? undefined;
   const resolvedThreadId =
     replyTransport && Object.hasOwn(replyTransport, "threadId")
-      ? (replyTransport.threadId ?? null)
-      : (threadId ?? null);
+      ? (replyTransport.threadId ?? undefined)
+      : (threadId ?? undefined);
 
   try {
     // Provider docking: this is an execution boundary (we're about to send).
     // Keep the module cheap to import by loading outbound plumbing lazily.
-    const { deliverOutboundPayloads } = await loadDeliverRuntime();
+    const { sendReplyPayloads } = await loadDeliverRuntime();
     const outboundSession = buildOutboundSessionContext({
       cfg,
       agentId: resolvedAgentId,
       sessionKey: params.sessionKey,
     });
-    const results = await deliverOutboundPayloads({
+    const results = await sendReplyPayloads({
       cfg,
       channel: channelId,
       to,
       accountId: accountId ?? undefined,
       payloads: [externalPayload],
-      replyToId: resolvedReplyToId ?? null,
+      replyToId: resolvedReplyToId ?? undefined,
       threadId: resolvedThreadId,
       session: outboundSession,
       abortSignal,

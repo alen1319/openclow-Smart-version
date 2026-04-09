@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   getChannelPlugin: vi.fn(() => undefined),
   normalizeChannelId: vi.fn((channel: string) => channel),
   resolveOutboundTarget: vi.fn(() => ({ ok: true as const, to: "+15550002" })),
-  deliverOutboundPayloads: vi.fn(async () => [{ channel: "whatsapp", messageId: "msg-1" }]),
+  sendReplyPayloads: vi.fn(async () => [{ channel: "whatsapp", messageId: "msg-1" }]),
   enqueueDelivery: vi.fn(async () => "queue-1"),
   ackDelivery: vi.fn(async () => {}),
   failDelivery: vi.fn(async () => {}),
@@ -76,8 +76,8 @@ vi.mock("../infra/outbound/targets.js", () => ({
   resolveOutboundTarget: mocks.resolveOutboundTarget,
 }));
 
-vi.mock("../infra/outbound/deliver.js", () => ({
-  deliverOutboundPayloads: mocks.deliverOutboundPayloads,
+vi.mock("../infra/outbound/message.js", () => ({
+  sendReplyPayloads: mocks.sendReplyPayloads,
 }));
 
 vi.mock("../infra/outbound/delivery-queue.js", () => ({
@@ -122,8 +122,8 @@ describe("scheduleRestartSentinelWake", () => {
         },
       },
     });
-    mocks.deliverOutboundPayloads.mockReset();
-    mocks.deliverOutboundPayloads.mockResolvedValue([{ channel: "whatsapp", messageId: "msg-1" }]);
+    mocks.sendReplyPayloads.mockReset();
+    mocks.sendReplyPayloads.mockResolvedValue([{ channel: "whatsapp", messageId: "msg-1" }]);
     mocks.enqueueDelivery.mockReset();
     mocks.enqueueDelivery.mockResolvedValue("queue-1");
     mocks.ackDelivery.mockClear();
@@ -138,7 +138,7 @@ describe("scheduleRestartSentinelWake", () => {
 
     await scheduleRestartSentinelWake({ deps });
 
-    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledWith(
+    expect(mocks.sendReplyPayloads).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "whatsapp",
         to: "+15550002",
@@ -173,7 +173,7 @@ describe("scheduleRestartSentinelWake", () => {
 
   it("retries outbound delivery once and logs a warning without dropping the agent wake", async () => {
     vi.useFakeTimers();
-    mocks.deliverOutboundPayloads
+    mocks.sendReplyPayloads
       .mockRejectedValueOnce(new Error("transport not ready"))
       .mockResolvedValueOnce([{ channel: "whatsapp", messageId: "msg-2" }]);
 
@@ -182,14 +182,14 @@ describe("scheduleRestartSentinelWake", () => {
     await wakePromise;
 
     expect(mocks.enqueueDelivery).toHaveBeenCalledTimes(1);
-    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledTimes(2);
-    expect(mocks.deliverOutboundPayloads).toHaveBeenNthCalledWith(
+    expect(mocks.sendReplyPayloads).toHaveBeenCalledTimes(2);
+    expect(mocks.sendReplyPayloads).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         skipQueue: true,
       }),
     );
-    expect(mocks.deliverOutboundPayloads).toHaveBeenNthCalledWith(
+    expect(mocks.sendReplyPayloads).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         skipQueue: true,
@@ -213,7 +213,7 @@ describe("scheduleRestartSentinelWake", () => {
 
   it("keeps one queued restart notice when outbound retries are exhausted", async () => {
     vi.useFakeTimers();
-    mocks.deliverOutboundPayloads
+    mocks.sendReplyPayloads
       .mockRejectedValueOnce(new Error("transport not ready"))
       .mockRejectedValueOnce(new Error("transport still not ready"));
 
@@ -222,7 +222,7 @@ describe("scheduleRestartSentinelWake", () => {
     await wakePromise;
 
     expect(mocks.enqueueDelivery).toHaveBeenCalledTimes(1);
-    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledTimes(2);
+    expect(mocks.sendReplyPayloads).toHaveBeenCalledTimes(2);
     expect(mocks.ackDelivery).not.toHaveBeenCalled();
     expect(mocks.failDelivery).toHaveBeenCalledWith("queue-1", "transport still not ready");
   });
@@ -268,6 +268,6 @@ describe("scheduleRestartSentinelWake", () => {
       sessionKey: "agent:main:main",
     });
     expect(mocks.requestHeartbeatNow).not.toHaveBeenCalled();
-    expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mocks.sendReplyPayloads).not.toHaveBeenCalled();
   });
 });

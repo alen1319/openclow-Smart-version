@@ -32,7 +32,7 @@ const getApiKeyForModelMock = vi.hoisted(() =>
 const fetchRemoteMediaMock = vi.hoisted(() => vi.fn());
 const runExecMock = vi.hoisted(() => vi.fn());
 const runCommandWithTimeoutMock = vi.hoisted(() => vi.fn());
-const mockDeliverOutboundPayloads = vi.hoisted(() => vi.fn());
+const mockSendReplyPayloads = vi.hoisted(() => vi.fn());
 
 const { MediaFetchErrorMock } = vi.hoisted(() => {
   class MediaFetchErrorMock extends Error {
@@ -106,8 +106,8 @@ function createAudioConfigWithEcho(opts?: {
 }
 
 function expectSingleEchoDeliveryCall() {
-  expect(mockDeliverOutboundPayloads).toHaveBeenCalledOnce();
-  const callArgs = mockDeliverOutboundPayloads.mock.calls[0]?.[0];
+  expect(mockSendReplyPayloads).toHaveBeenCalledOnce();
+  const callArgs = mockSendReplyPayloads.mock.calls[0]?.[0];
   expect(callArgs).toBeDefined();
   return callArgs as {
     to?: string;
@@ -173,7 +173,7 @@ describe("applyMediaUnderstanding – echo transcript", () => {
       runCommandWithTimeout: runCommandWithTimeoutMock,
     }));
     vi.doMock("../infra/outbound/deliver-runtime.js", () => ({
-      deliverOutboundPayloads: (...args: unknown[]) => mockDeliverOutboundPayloads(...args),
+      sendReplyPayloads: (...args: unknown[]) => mockSendReplyPayloads(...args),
     }));
     vi.doMock("./provider-registry.js", async () => {
       const actual =
@@ -222,8 +222,8 @@ describe("applyMediaUnderstanding – echo transcript", () => {
     fetchRemoteMediaMock.mockClear();
     runExecMock.mockReset();
     runCommandWithTimeoutMock.mockReset();
-    mockDeliverOutboundPayloads.mockClear();
-    mockDeliverOutboundPayloads.mockResolvedValue([{ channel: "whatsapp", messageId: "echo-1" }]);
+    mockSendReplyPayloads.mockClear();
+    mockSendReplyPayloads.mockResolvedValue([{ channel: "whatsapp", messageId: "echo-1" }]);
     clearMediaUnderstandingBinaryCacheForTests?.();
   });
 
@@ -242,7 +242,7 @@ describe("applyMediaUnderstanding – echo transcript", () => {
 
     await applyMediaUnderstanding({ ctx, cfg, providers });
 
-    expect(mockDeliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mockSendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("does NOT echo when echoTranscript is absent (default)", async () => {
@@ -252,7 +252,7 @@ describe("applyMediaUnderstanding – echo transcript", () => {
 
     await applyMediaUnderstanding({ ctx, cfg, providers });
 
-    expect(mockDeliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mockSendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("echoes transcript with default format when echoTranscript is true", async () => {
@@ -312,7 +312,7 @@ describe("applyMediaUnderstanding – echo transcript", () => {
 
     // No audio outputs → Transcript not set → no echo
     expect(ctx.Transcript).toBeUndefined();
-    expect(mockDeliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mockSendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("does NOT echo when transcription fails", async () => {
@@ -327,7 +327,7 @@ describe("applyMediaUnderstanding – echo transcript", () => {
     await applyMediaUnderstanding({ ctx, cfg, providers });
 
     expect(ctx.Transcript).toBeUndefined();
-    expect(mockDeliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mockSendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("does NOT echo when channel is not deliverable", async () => {
@@ -344,7 +344,7 @@ describe("applyMediaUnderstanding – echo transcript", () => {
     // Transcript should be set (transcription succeeded)
     expect(ctx.Transcript).toBe("hello world");
     // But echo should be skipped
-    expect(mockDeliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mockSendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("does NOT echo when ctx has no From or OriginatingTo", async () => {
@@ -361,7 +361,7 @@ describe("applyMediaUnderstanding – echo transcript", () => {
     await applyMediaUnderstanding({ ctx, cfg, providers });
 
     expect(ctx.Transcript).toBe("hello world");
-    expect(mockDeliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mockSendReplyPayloads).not.toHaveBeenCalled();
   });
 
   it("uses OriginatingTo when From is absent", async () => {
@@ -386,7 +386,7 @@ describe("applyMediaUnderstanding – echo transcript", () => {
     const ctx = createAudioCtxWithProvider(mediaPath);
     const { cfg, providers } = createAudioConfigWithEcho({ echoTranscript: true });
 
-    mockDeliverOutboundPayloads.mockRejectedValueOnce(new Error("delivery timeout"));
+    mockSendReplyPayloads.mockRejectedValueOnce(new Error("delivery timeout"));
 
     // Should not throw
     const result = await applyMediaUnderstanding({ ctx, cfg, providers });
@@ -395,6 +395,6 @@ describe("applyMediaUnderstanding – echo transcript", () => {
     expect(result.appliedAudio).toBe(true);
     expect(ctx.Transcript).toBe("hello world");
     // Deliver was attempted
-    expect(mockDeliverOutboundPayloads).toHaveBeenCalledOnce();
+    expect(mockSendReplyPayloads).toHaveBeenCalledOnce();
   });
 });

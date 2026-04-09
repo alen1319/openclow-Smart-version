@@ -74,7 +74,7 @@ import {
   setHeartbeatWakeHandler,
 } from "./heartbeat-wake.js";
 import type { OutboundSendDeps } from "./outbound/deliver.js";
-import { deliverOutboundPayloads } from "./outbound/deliver.js";
+import { sendReplyPayloads } from "./outbound/message.js";
 import { buildOutboundSessionContext } from "./outbound/session-context.js";
 import {
   resolveHeartbeatDeliveryTarget,
@@ -792,7 +792,7 @@ export async function runHeartbeatOnce(opts: {
         return false;
       }
     }
-    await deliverOutboundPayloads({
+    await sendReplyPayloads({
       cfg,
       channel: delivery.channel,
       to: delivery.to,
@@ -998,7 +998,7 @@ export async function runHeartbeatOnce(opts: {
       }
     }
 
-    await deliverOutboundPayloads({
+    await sendReplyPayloads({
       cfg,
       channel: delivery.channel,
       to: delivery.to,

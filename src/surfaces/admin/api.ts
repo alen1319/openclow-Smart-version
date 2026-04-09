@@ -7,12 +7,17 @@ import {
 } from "../../observability/query/ReplayQueryService.js";
 import type { ObservabilityRuntimePaths } from "../../observability/runtime.js";
 import { TraceProvider } from "../../observability/tracing/TraceProvider.js";
+import {
+  getStructuredMemoryRuntimeMetrics,
+  type StructuredMemoryRuntimeMetrics,
+} from "../../services/memory/StructuredMemoryMetricsRegistry.js";
 import type { SystemStatusView } from "../common/SystemState.js";
 
 export type TraceDiagnosticsView = {
   traceId: string;
   steps: ReturnType<typeof TraceProvider.getTrace>;
 };
+export type StructuredMemoryMetricsView = StructuredMemoryRuntimeMetrics | null;
 
 export type AdminSurfaceDeps = {
   getSystemStatus: () => SystemStatusView;
@@ -66,6 +71,10 @@ export async function getReplayDiagnostics(
   );
 }
 
+export function getStructuredMemoryMetricsDiagnostics(): Outcome<StructuredMemoryMetricsView> {
+  return Success(getStructuredMemoryRuntimeMetrics());
+}
+
 export function createAdminApi(deps: AdminSurfaceDeps) {
   return {
     getSystemStatus(): Outcome<SystemStatusView> {
@@ -75,6 +84,7 @@ export function createAdminApi(deps: AdminSurfaceDeps) {
     getReplayDiagnostics(params: ReplayQueryParams): Promise<Outcome<ReplayView>> {
       return getReplayDiagnostics(params, { paths: deps.observabilityPaths });
     },
+    getStructuredMemoryMetricsDiagnostics,
   };
 }
 
@@ -120,5 +130,17 @@ export async function handleAdminReplayLookupHttp(
     return true;
   }
   sendJson(res, 200, result);
+  return true;
+}
+
+export function handleAdminMemoryRuntimeMetricsHttp(
+  req: IncomingMessage,
+  res: ServerResponse,
+): boolean {
+  const url = req.url ?? "";
+  if (!url.startsWith("/admin/api/memory/runtime")) {
+    return false;
+  }
+  sendJson(res, 200, getStructuredMemoryMetricsDiagnostics());
   return true;
 }

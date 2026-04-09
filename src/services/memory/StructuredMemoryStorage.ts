@@ -3,6 +3,10 @@ import path from "node:path";
 import type { MemoryEntry, MemoryScopeType } from "../../domain/memory/Scope.js";
 import { type FileLockOptions, withFileLock } from "../../plugin-sdk/file-lock.js";
 import type { IMemoryStorage } from "./IMemoryStorage.js";
+import {
+  publishStructuredMemoryRuntimeMetrics,
+  type StructuredMemoryRuntimeMetrics,
+} from "./StructuredMemoryMetricsRegistry.js";
 
 export type StructuredMemoryStorageOptions = {
   rootDir: string;
@@ -208,12 +212,28 @@ export class StructuredMemoryStorage implements IMemoryStorage {
   private initialized = false;
   private initQueue: Promise<void> = Promise.resolve();
   private readonly shardQueues = new Map<number, Promise<void>>();
+  private readonly shardEntryCounts = new Map<number, number>();
+  private queueWaitSamples = 0;
+  private queueWaitTotalMs = 0;
+  private queueWaitMaxMs = 0;
+  private lockWaitSamples = 0;
+  private lockWaitTotalMs = 0;
+  private lockWaitMaxMs = 0;
+  private cleanupRuns = 0;
+  private cleanupLastDurationMs = 0;
+  private cleanupTotalDurationMs = 0;
+  private cleanupLastDeletedEntries = 0;
+  private cleanupTotalDeletedEntries = 0;
 
   constructor(private readonly options: StructuredMemoryStorageOptions) {
     this.now = options.now ?? (() => Date.now());
     this.logger = options.logger ?? ((line: string) => console.log(line));
     this.shardCount = normalizeShardCount(options.shardCount);
     this.lockOptions = mergeLockOptions(options.lockOptions);
+    for (let shard = 0; shard < this.shardCount; shard += 1) {
+      this.shardEntryCounts.set(shard, 0);
+    }
+    this.publishMetrics();
   }
 
   async find(scope: MemoryScopeType, ownerId: string): Promise<MemoryEntry[]> {
@@ -224,7 +244,7 @@ export class StructuredMemoryStorage implements IMemoryStorage {
     const shardIndex = this.resolveShardIndex(scope, normalizedOwnerId);
     return await this.withShardLock(shardIndex, async ({ shardPath }) => {
       const now = this.now();
-      const entries = await this.readShardEntries(shardPath);
+      const entries = await this.readShardEntries(shardPath, shardIndex);
       const filtered: MemoryEntry[] = [];
       let changed = false;
 
@@ -247,6 +267,7 @@ export class StructuredMemoryStorage implements IMemoryStorage {
             entry.expiresAt > now,
         );
         await this.writeShardEntries(shardPath, shardIndex, retained);
+        this.publishMetrics();
       }
 
       return filtered.toSorted((left, right) => left.updatedAt - right.updatedAt);
@@ -260,11 +281,12 @@ export class StructuredMemoryStorage implements IMemoryStorage {
     const normalized = normalizeLoadedEntry(entry);
     const shardIndex = this.resolveShardIndex(normalized.scope, normalized.ownerId);
     await this.withShardLock(shardIndex, async ({ shardPath }) => {
-      const entries = await this.readShardEntries(shardPath);
+      const entries = await this.readShardEntries(shardPath, shardIndex);
       const key = buildEntryKey(normalized);
       const next = entries.filter((candidate) => buildEntryKey(candidate) !== key);
       next.push(cloneEntry(normalized));
       await this.writeShardEntries(shardPath, shardIndex, next);
+      this.publishMetrics();
     });
   }
 
@@ -275,7 +297,7 @@ export class StructuredMemoryStorage implements IMemoryStorage {
     }
     const shardIndex = this.resolveShardIndex(scope, normalizedOwnerId);
     await this.withShardLock(shardIndex, async ({ shardPath }) => {
-      const entries = await this.readShardEntries(shardPath);
+      const entries = await this.readShardEntries(shardPath, shardIndex);
       const retained = entries.filter(
         (entry) => !(entry.scope === scope && entry.ownerId === normalizedOwnerId),
       );
@@ -283,15 +305,17 @@ export class StructuredMemoryStorage implements IMemoryStorage {
         return;
       }
       await this.writeShardEntries(shardPath, shardIndex, retained);
+      this.publishMetrics();
     });
   }
 
   async deleteExpired(beforeTimestamp: number): Promise<number> {
     await this.ensureInitialized();
+    const cleanupStartedAt = Date.now();
     let deleted = 0;
     for (let shardIndex = 0; shardIndex < this.shardCount; shardIndex += 1) {
       deleted += await this.withShardLock(shardIndex, async ({ shardPath }) => {
-        const entries = await this.readShardEntries(shardPath);
+        const entries = await this.readShardEntries(shardPath, shardIndex);
         const retained = entries.filter(
           (entry) => typeof entry.expiresAt !== "number" || entry.expiresAt > beforeTimestamp,
         );
@@ -302,7 +326,14 @@ export class StructuredMemoryStorage implements IMemoryStorage {
         return removed;
       });
     }
+    const cleanupDurationMs = Math.max(0, Date.now() - cleanupStartedAt);
+    this.observeCleanup(cleanupDurationMs, deleted);
+    this.publishMetrics();
     return deleted;
+  }
+
+  getRuntimeMetrics(): StructuredMemoryRuntimeMetrics {
+    return this.buildMetricsSnapshot();
   }
 
   private async withShardLock<T>(
@@ -312,7 +343,9 @@ export class StructuredMemoryStorage implements IMemoryStorage {
     await this.ensureInitialized();
     return await this.enqueueShardOperation(shardIndex, async () => {
       const shardPath = this.resolveShardPath(shardIndex);
+      const lockRequestedAt = Date.now();
       return await withFileLock(shardPath, this.lockOptions, async () => {
+        this.observeLockWait(Math.max(0, Date.now() - lockRequestedAt));
         return await operation({ shardPath });
       });
     });
@@ -322,8 +355,18 @@ export class StructuredMemoryStorage implements IMemoryStorage {
     shardIndex: number,
     operation: () => Promise<T>,
   ): Promise<T> {
+    const queuedAt = Date.now();
     const previous = this.shardQueues.get(shardIndex) ?? Promise.resolve();
-    const run = previous.then(operation, operation);
+    const run = previous.then(
+      async () => {
+        this.observeQueueWait(Math.max(0, Date.now() - queuedAt));
+        return await operation();
+      },
+      async () => {
+        this.observeQueueWait(Math.max(0, Date.now() - queuedAt));
+        return await operation();
+      },
+    );
     this.shardQueues.set(
       shardIndex,
       run.then(
@@ -376,6 +419,7 @@ export class StructuredMemoryStorage implements IMemoryStorage {
                 `[StructuredMemoryStorage] existing shard count ${schema.shardCount} differs from configured ${this.shardCount}; using configured value for future writes.`,
               );
             }
+            await this.refreshShardEntryCounts();
             this.initialized = true;
             return;
           }
@@ -388,6 +432,7 @@ export class StructuredMemoryStorage implements IMemoryStorage {
             createdAt: this.now(),
           };
           await this.writeAtomicFile(schemaPath, JSON.stringify(nextSchema));
+          await this.refreshShardEntryCounts();
           this.initialized = true;
         });
         this.initialized = true;
@@ -456,6 +501,7 @@ export class StructuredMemoryStorage implements IMemoryStorage {
       const shardPath = this.resolveShardPath(shardIndex);
       await this.writeShardEntries(shardPath, shardIndex, shardEntries);
     }
+    this.publishMetrics();
 
     const migratedPath = `${legacyFilePath}.migrated-${this.now()}`;
     try {
@@ -473,17 +519,23 @@ export class StructuredMemoryStorage implements IMemoryStorage {
     return true;
   }
 
-  private async readShardEntries(shardPath: string): Promise<MemoryEntry[]> {
+  private async readShardEntries(shardPath: string, shardIndex?: number): Promise<MemoryEntry[]> {
     let raw: string;
     try {
       raw = await fs.readFile(shardPath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        if (typeof shardIndex === "number") {
+          this.trackShardEntryCount(shardIndex, 0);
+        }
         return [];
       }
       throw error;
     }
     const entries = parseShardEntries(raw);
+    if (typeof shardIndex === "number") {
+      this.trackShardEntryCount(shardIndex, entries.length);
+    }
     if (entries.length === 0 && raw.trim()) {
       this.logger(
         `[StructuredMemoryStorage] shard parse fallback for ${shardPath}; rewriting cleanly.`,
@@ -503,6 +555,7 @@ export class StructuredMemoryStorage implements IMemoryStorage {
       entries: entries.map((entry) => cloneEntry(entry)),
     };
     await this.writeAtomicFile(shardPath, JSON.stringify(payload));
+    this.trackShardEntryCount(shardIndex, entries.length);
   }
 
   private async writeAtomicFile(filePath: string, content: string): Promise<void> {
@@ -510,5 +563,82 @@ export class StructuredMemoryStorage implements IMemoryStorage {
     const tempPath = `${filePath}.tmp-${process.pid}-${this.now()}-${Math.random().toString(16).slice(2)}`;
     await fs.writeFile(tempPath, content, "utf8");
     await fs.rename(tempPath, filePath);
+  }
+
+  private async refreshShardEntryCounts(): Promise<void> {
+    for (let shardIndex = 0; shardIndex < this.shardCount; shardIndex += 1) {
+      const shardPath = this.resolveShardPath(shardIndex);
+      await this.readShardEntries(shardPath, shardIndex);
+    }
+    this.publishMetrics();
+  }
+
+  private trackShardEntryCount(shardIndex: number, count: number): void {
+    this.shardEntryCounts.set(shardIndex, Math.max(0, Math.floor(count)));
+  }
+
+  private observeQueueWait(waitMs: number): void {
+    this.queueWaitSamples += 1;
+    this.queueWaitTotalMs += waitMs;
+    if (waitMs > this.queueWaitMaxMs) {
+      this.queueWaitMaxMs = waitMs;
+    }
+  }
+
+  private observeLockWait(waitMs: number): void {
+    this.lockWaitSamples += 1;
+    this.lockWaitTotalMs += waitMs;
+    if (waitMs > this.lockWaitMaxMs) {
+      this.lockWaitMaxMs = waitMs;
+    }
+  }
+
+  private observeCleanup(durationMs: number, deletedEntries: number): void {
+    this.cleanupRuns += 1;
+    this.cleanupLastDurationMs = durationMs;
+    this.cleanupTotalDurationMs += durationMs;
+    this.cleanupLastDeletedEntries = Math.max(0, Math.floor(deletedEntries));
+    this.cleanupTotalDeletedEntries += this.cleanupLastDeletedEntries;
+  }
+
+  private buildMetricsSnapshot(): StructuredMemoryRuntimeMetrics {
+    const shardEntryCounts = Array.from(this.shardEntryCounts.entries())
+      .map(([shard, entries]) => ({ shard, entries }))
+      .toSorted((left, right) => left.shard - right.shard);
+    const totalEntries = shardEntryCounts.reduce((total, entry) => total + entry.entries, 0);
+
+    return {
+      capturedAt: Date.now(),
+      shardCount: this.shardCount,
+      totalEntries,
+      shardEntryCounts,
+      queueWait: {
+        samples: this.queueWaitSamples,
+        avgMs:
+          this.queueWaitSamples > 0
+            ? Math.round((this.queueWaitTotalMs / this.queueWaitSamples) * 100) / 100
+            : 0,
+        maxMs: this.queueWaitMaxMs,
+      },
+      lockWait: {
+        samples: this.lockWaitSamples,
+        avgMs:
+          this.lockWaitSamples > 0
+            ? Math.round((this.lockWaitTotalMs / this.lockWaitSamples) * 100) / 100
+            : 0,
+        maxMs: this.lockWaitMaxMs,
+      },
+      cleanup: {
+        runs: this.cleanupRuns,
+        lastDurationMs: this.cleanupLastDurationMs,
+        totalDurationMs: this.cleanupTotalDurationMs,
+        lastDeletedEntries: this.cleanupLastDeletedEntries,
+        totalDeletedEntries: this.cleanupTotalDeletedEntries,
+      },
+    };
+  }
+
+  private publishMetrics(): void {
+    publishStructuredMemoryRuntimeMetrics(this.buildMetricsSnapshot());
   }
 }

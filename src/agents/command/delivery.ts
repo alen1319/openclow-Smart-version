@@ -11,8 +11,8 @@ import {
   resolveAgentOutboundTarget,
 } from "../../infra/outbound/agent-delivery.js";
 import { resolveMessageChannelSelection } from "../../infra/outbound/channel-selection.js";
-import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import { buildOutboundResultEnvelope } from "../../infra/outbound/envelope.js";
+import { sendReplyPayloads } from "../../infra/outbound/message.js";
 import {
   formatOutboundPayloadLog,
   type NormalizedOutboundPayload,
@@ -222,8 +222,8 @@ export async function deliverAgentCommandResult(params: {
   const resolvedReplyToId = replyTransport?.replyToId ?? undefined;
   const resolvedThreadTarget =
     replyTransport && Object.hasOwn(replyTransport, "threadId")
-      ? (replyTransport.threadId ?? null)
-      : (resolvedThreadId ?? null);
+      ? (replyTransport.threadId ?? undefined)
+      : (resolvedThreadId ?? undefined);
 
   const logDeliveryError = (err: unknown) => {
     const message = `Delivery failed (${deliveryChannel}${deliveryTarget ? ` to ${deliveryTarget}` : ""}): ${String(err)}`;
@@ -310,18 +310,17 @@ export async function deliverAgentCommandResult(params: {
   }
   if (deliver && deliveryChannel && !isInternalMessageChannel(deliveryChannel)) {
     if (deliveryTarget) {
-      await deliverOutboundPayloads({
+      await sendReplyPayloads({
         cfg,
         channel: deliveryChannel,
         to: deliveryTarget,
         accountId: resolvedAccountId,
         payloads: deliveryPayloads,
         session: outboundSession,
-        replyToId: resolvedReplyToId ?? null,
-        threadId: resolvedThreadTarget ?? null,
+        replyToId: resolvedReplyToId ?? undefined,
+        threadId: resolvedThreadTarget,
         bestEffort: bestEffortDeliver,
         onError: (err) => logDeliveryError(err),
-        onPayload: logPayload,
         deps: createOutboundSendDeps(deps),
       });
     }

@@ -37,7 +37,7 @@ import {
 const log = createSubsystemLogger("gateway/exec-approvals");
 export type { ExecApprovalRequest, ExecApprovalResolved };
 
-type DeliverOutboundPayloads = typeof import("./outbound/deliver.js").deliverOutboundPayloads;
+type DeliverOutboundPayloads = typeof import("./outbound/message.js").sendReplyPayloads;
 type MaybePromise<T> = T | Promise<T>;
 type ResolveSessionTargetFn = (params: {
   cfg: OpenClawConfig;
@@ -748,8 +748,8 @@ export function createExecApprovalForwarder(
   const deliver =
     deps.deliver ??
     (async (params) => {
-      const { deliverOutboundPayloads } = await loadExecApprovalForwarderRuntime();
-      return deliverOutboundPayloads(params);
+      const { sendReplyPayloads } = await loadExecApprovalForwarderRuntime();
+      return sendReplyPayloads(params);
     });
   const nowMs = deps.nowMs ?? Date.now;
   const resolveSessionTarget = deps.resolveSessionTarget ?? defaultResolveSessionTarget;

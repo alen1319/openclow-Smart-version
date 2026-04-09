@@ -51,8 +51,8 @@ export async function sendTranscriptEcho(params: {
   const text = formatEchoTranscript(transcript, params.format ?? DEFAULT_ECHO_TRANSCRIPT_FORMAT);
 
   try {
-    const { deliverOutboundPayloads } = await loadDeliverRuntime();
-    await deliverOutboundPayloads({
+    const { sendReplyPayloads } = await loadDeliverRuntime();
+    await sendReplyPayloads({
       cfg,
       channel: normalizedChannel,
       to,

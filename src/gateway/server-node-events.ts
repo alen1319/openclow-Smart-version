@@ -7,7 +7,6 @@ import {
   createOutboundSendDeps,
   defaultRuntime,
   deleteMediaBuffer,
-  deliverOutboundPayloads,
   enqueueSystemEvent,
   formatForLog,
   loadConfig,
@@ -21,7 +20,7 @@ import {
   registerApnsRegistration,
   requestHeartbeatNow,
   resolveGatewayModelSupportsImages,
-  resolveOutboundTarget,
+  sendReplyPayloads,
   resolveSessionAgentId,
   resolveSessionModelRef,
   sanitizeInboundSystemTags,
@@ -242,23 +241,14 @@ async function sendReceiptAck(params: {
   to: string;
   text: string;
 }) {
-  const resolved = resolveOutboundTarget({
-    channel: params.channel,
-    to: params.to,
-    cfg: params.cfg,
-    mode: "explicit",
-  });
-  if (!resolved.ok) {
-    throw new Error(String(resolved.error));
-  }
   const session = buildOutboundSessionContext({
     cfg: params.cfg,
     sessionKey: params.sessionKey,
   });
-  await deliverOutboundPayloads({
+  await sendReplyPayloads({
     cfg: params.cfg,
     channel: params.channel,
-    to: resolved.to,
+    to: params.to,
     payloads: [{ text: params.text }],
     session,
     bestEffort: true,

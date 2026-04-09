@@ -3,7 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { TraceProvider } from "../../observability/tracing/TraceProvider.js";
-import { createAdminApi, getReplayDiagnostics, getTraceDiagnostics } from "./api.js";
+import {
+  publishStructuredMemoryRuntimeMetrics,
+  resetStructuredMemoryRuntimeMetricsForTests,
+} from "../../services/memory/StructuredMemoryMetricsRegistry.js";
+import {
+  createAdminApi,
+  getReplayDiagnostics,
+  getStructuredMemoryMetricsDiagnostics,
+  getTraceDiagnostics,
+} from "./api.js";
 
 const tempDirs: string[] = [];
 
@@ -21,6 +30,7 @@ async function makeReplayPaths(testName: string) {
 
 afterEach(async () => {
   TraceProvider.resetForTests();
+  resetStructuredMemoryRuntimeMetricsForTests();
   await Promise.all(
     tempDirs.splice(0, tempDirs.length).map(async (dir) => {
       await fs.rm(dir, { recursive: true, force: true });
@@ -72,6 +82,46 @@ describe("admin surface api", () => {
     }
     expect(replay.data.total).toBe(2);
     expect(replay.data.events.map((event) => event.source)).toEqual(["trace", "audit"]);
+  });
+
+  it("returns structured memory runtime metrics snapshot", () => {
+    publishStructuredMemoryRuntimeMetrics({
+      capturedAt: 100,
+      shardCount: 4,
+      totalEntries: 7,
+      shardEntryCounts: [
+        { shard: 0, entries: 3 },
+        { shard: 1, entries: 2 },
+        { shard: 2, entries: 1 },
+        { shard: 3, entries: 1 },
+      ],
+      queueWait: { samples: 2, avgMs: 1.5, maxMs: 3 },
+      lockWait: { samples: 2, avgMs: 0.5, maxMs: 1 },
+      cleanup: {
+        runs: 1,
+        lastDurationMs: 11,
+        totalDurationMs: 11,
+        lastDeletedEntries: 2,
+        totalDeletedEntries: 2,
+      },
+    });
+    const result = getStructuredMemoryMetricsDiagnostics();
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data).toEqual(
+      expect.objectContaining({
+        shardCount: 4,
+        totalEntries: 7,
+        lockWait: expect.objectContaining({
+          samples: 2,
+        }),
+        cleanup: expect.objectContaining({
+          runs: 1,
+        }),
+      }),
+    );
   });
 
   it("createAdminApi wires replay query with configured observability paths", async () => {
