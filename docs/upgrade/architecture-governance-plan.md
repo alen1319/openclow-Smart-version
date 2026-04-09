@@ -3,6 +3,10 @@
 Date: 2026-04-09  
 Scope: Stage 6 candidate baseline and post-upgrade stabilization
 
+Normative reference:
+
+- `docs/upgrade/openclaw-smart-internal-governance-spec.md` (internal execution constitution)
+
 ## 1. Current-State Audit
 
 ### 1.1 Problem taxonomy (by impact)
