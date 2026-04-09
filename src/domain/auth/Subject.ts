@@ -20,6 +20,7 @@ export interface TaskIntent {
   readonly params: unknown;
   readonly riskLevel: "low" | "medium" | "high";
   readonly traceId?: string;
+  readonly sessionId?: string;
   /**
    * Optional idempotency key for approval flow. When omitted, the service will
    * derive one from subject + intent payload.

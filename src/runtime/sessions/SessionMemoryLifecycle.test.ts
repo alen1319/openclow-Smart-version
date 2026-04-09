@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MemoryScopeType } from "../../domain/memory/Scope.js";
+import { TraceProvider } from "../../observability/tracing/TraceProvider.js";
 import { InMemoryMemoryStorage } from "../../services/memory/InMemoryMemoryStorage.js";
 import { createSessionMemoryLifecycle } from "./SessionMemoryLifecycle.js";
 
@@ -68,6 +69,58 @@ describe("SessionMemoryLifecycle", () => {
       "sess-42",
       "session_lifecycle_reason",
       "delete",
+    );
+  });
+
+  it("emits cleanup metrics and audit when expired entries are recycled", async () => {
+    const storage = new InMemoryMemoryStorage();
+    await storage.save({
+      key: "expired_key",
+      value: "old",
+      scope: MemoryScopeType.SESSION,
+      ownerId: "sess-expired",
+      updatedAt: 1,
+      expiresAt: Date.now() - 1,
+    });
+    const audit = {
+      logMemoryMutation: vi.fn(),
+      logMemoryCleanup: vi.fn(),
+    };
+    TraceProvider.resetForTests();
+    const lifecycle = createSessionMemoryLifecycle({
+      storage,
+      auditService: audit,
+      logger: vi.fn(),
+    });
+
+    await lifecycle.handleEvent({
+      event: {
+        sessionKey: "agent:main:telegram:direct:42",
+        reason: "create",
+      },
+      sessionRow: {
+        key: "agent:main:telegram:direct:42",
+        sessionId: "sess-42",
+        channel: "telegram",
+        lastTo: "telegram:42",
+      },
+    });
+
+    expect(audit.logMemoryCleanup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        triggerSessionId: "sess-42",
+        deletedEntries: 1,
+      }),
+    );
+    expect(TraceProvider.getTrace("session-memory:sess-42")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: expect.objectContaining({
+            stage: "CLEANUP_COMPLETED",
+            deletedEntries: 1,
+          }),
+        }),
+      ]),
     );
   });
 });

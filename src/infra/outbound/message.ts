@@ -20,6 +20,7 @@ import {
   type OutboundDeliveryResult,
   type OutboundSendDeps,
 } from "./deliver.js";
+import type { OutboundIdentity } from "./identity.js";
 import type { OutboundMirror } from "./mirror.js";
 import { normalizeReplyPayloadsForDelivery } from "./payloads.js";
 import { buildOutboundSessionContext } from "./session-context.js";
@@ -69,6 +70,9 @@ type MessageSendParams = {
   gateway?: MessageGatewayOptions;
   idempotencyKey?: string;
   mirror?: OutboundMirror;
+  sessionKey?: string;
+  identity?: OutboundIdentity;
+  gatewayClientScopes?: readonly string[];
   abortSignal?: AbortSignal;
   silent?: boolean;
 };
@@ -233,6 +237,8 @@ async function dispatchDirectViaDeliveryDispatcher(params: {
   deps?: OutboundSendDeps;
   session?: ReturnType<typeof buildOutboundSessionContext>;
   mirror?: OutboundMirror;
+  identity?: OutboundIdentity;
+  gatewayClientScopes?: readonly string[];
   abortSignal?: AbortSignal;
   gifPlayback?: boolean;
   forceDocument?: boolean;
@@ -279,10 +285,12 @@ async function dispatchDirectViaDeliveryDispatcher(params: {
           },
         ],
         threadId: parcel.target.threadId,
+        identity: params.identity,
         gifPlayback: params.gifPlayback,
         forceDocument: params.forceDocument,
         deps: params.deps,
         bestEffort: params.bestEffort,
+        gatewayClientScopes: params.gatewayClientScopes,
         abortSignal: params.abortSignal,
         silent: params.silent,
         mirror: params.mirror,
@@ -407,7 +415,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
     const outboundSession = buildOutboundSessionContext({
       cfg,
       agentId: params.agentId,
-      sessionKey: params.mirror?.sessionKey,
+      sessionKey: params.sessionKey ?? params.mirror?.sessionKey,
     });
     const resolvedMirror = params.mirror
       ? {
@@ -428,6 +436,8 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       bestEffort: params.bestEffort,
       session: outboundSession,
       mirror: resolvedMirror,
+      identity: params.identity,
+      gatewayClientScopes: params.gatewayClientScopes,
       abortSignal: params.abortSignal,
       gifPlayback: params.gifPlayback,
       forceDocument: params.forceDocument,
@@ -453,10 +463,12 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       payloads: normalizedPayloads,
       replyToId: params.replyToId,
       threadId: params.threadId,
+      identity: params.identity,
       gifPlayback: params.gifPlayback,
       forceDocument: params.forceDocument,
       deps: params.deps,
       bestEffort: params.bestEffort,
+      gatewayClientScopes: params.gatewayClientScopes,
       abortSignal: params.abortSignal,
       silent: params.silent,
       mirror: resolvedMirror,
@@ -484,7 +496,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       accountId: params.accountId,
       agentId: params.agentId,
       channel,
-      sessionKey: params.mirror?.sessionKey,
+      sessionKey: params.sessionKey ?? params.mirror?.sessionKey,
       idempotencyKey: await resolveGatewayIdempotencyKey(params.idempotencyKey),
     },
   });

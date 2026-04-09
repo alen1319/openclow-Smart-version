@@ -2,9 +2,8 @@ import type { CliDeps } from "../cli/deps.js";
 import { createOutboundSendDeps } from "../cli/outbound-send-deps.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { deliverOutboundPayloads } from "../infra/outbound/deliver.js";
 import { resolveAgentOutboundIdentity } from "../infra/outbound/identity.js";
-import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
+import { sendMessage } from "../infra/outbound/message.js";
 import { getChildLogger } from "../logging.js";
 import {
   resolveFailureDestination,
@@ -51,11 +50,6 @@ export async function sendFailureNotificationAnnounce(
   }
 
   const identity = resolveAgentOutboundIdentity(cfg, agentId);
-  const session = buildOutboundSessionContext({
-    cfg,
-    agentId,
-    sessionKey: `cron:${jobId}:failure`,
-  });
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => {
@@ -63,14 +57,15 @@ export async function sendFailureNotificationAnnounce(
   }, FAILURE_NOTIFICATION_TIMEOUT_MS);
 
   try {
-    await deliverOutboundPayloads({
+    await sendMessage({
       cfg,
       channel: resolvedTarget.channel,
       to: resolvedTarget.to,
       accountId: resolvedTarget.accountId,
       threadId: resolvedTarget.threadId,
-      payloads: [{ text: message }],
-      session,
+      content: message,
+      agentId,
+      sessionKey: `cron:${jobId}:failure`,
       identity,
       bestEffort: false,
       deps: createOutboundSendDeps(deps),

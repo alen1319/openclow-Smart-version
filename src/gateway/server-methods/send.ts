@@ -6,13 +6,12 @@ import { loadConfig } from "../../config/config.js";
 import { applyPluginAutoEnable } from "../../config/plugin-auto-enable.js";
 import { resolveOutboundChannelPlugin } from "../../infra/outbound/channel-resolution.js";
 import { resolveMessageChannelSelection } from "../../infra/outbound/channel-selection.js";
-import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
+import { sendMessage } from "../../infra/outbound/message.js";
 import {
   ensureOutboundSessionEntry,
   resolveOutboundSessionRoute,
 } from "../../infra/outbound/outbound-session.js";
 import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads.js";
-import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { maybeResolveIdLikeTarget } from "../../infra/outbound/target-resolver.js";
 import { resolveOutboundTarget } from "../../infra/outbound/targets.js";
 import { normalizePollInput } from "../../polls.js";
@@ -252,21 +251,20 @@ export const sendHandlers: GatewayRequestHandlers = {
             route: derivedRoute,
           });
         }
-        const outboundSession = buildOutboundSessionContext({
+        const sendResult = await sendMessage({
           cfg,
-          agentId: effectiveAgentId,
-          sessionKey: providedSessionKey ?? derivedRoute?.sessionKey,
-        });
-        const results = await deliverOutboundPayloads({
-          cfg,
-          channel: outboundChannel,
+          channel,
           to: deliveryTarget,
+          content: message,
+          agentId: effectiveAgentId,
           accountId,
-          payloads: [{ text: message, mediaUrl, mediaUrls }],
-          session: outboundSession,
+          mediaUrl,
+          mediaUrls,
           gifPlayback: request.gifPlayback,
-          threadId: threadId ?? null,
+          threadId,
           deps: outboundDeps,
+          idempotencyKey: idem,
+          sessionKey: providedSessionKey ?? derivedRoute?.sessionKey,
           gatewayClientScopes: client?.connect?.scopes ?? [],
           mirror: providedSessionKey
             ? {
@@ -286,8 +284,7 @@ export const sendHandlers: GatewayRequestHandlers = {
                 }
               : undefined,
         });
-
-        const result = results.at(-1);
+        const result = sendResult.result;
         if (!result) {
           throw new Error("No delivery result");
         }

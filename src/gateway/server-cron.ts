@@ -30,7 +30,7 @@ import { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 import { SsrFBlockedError } from "../infra/net/ssrf.js";
-import { deliverOutboundPayloads } from "../infra/outbound/deliver.js";
+import { sendMessage } from "../infra/outbound/message.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
@@ -361,13 +361,16 @@ export function buildGatewayCronService(params: {
       if (!target.ok) {
         throw target.error;
       }
-      await deliverOutboundPayloads({
+      await sendMessage({
         cfg: runtimeConfig,
         channel: target.channel,
         to: target.to,
         accountId: target.accountId,
         threadId: target.threadId,
-        payloads: [{ text }],
+        content: text,
+        agentId,
+        sessionKey: `cron:${job.id}:failure-alert`,
+        bestEffort: false,
         deps: createOutboundSendDeps(params.deps),
       });
     },

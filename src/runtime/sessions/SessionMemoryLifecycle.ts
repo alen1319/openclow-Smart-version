@@ -1,5 +1,6 @@
 import type { AuthorizationPlatform } from "../../domain/auth/Subject.js";
 import type { SessionContext } from "../../domain/session/Context.js";
+import { TraceProvider } from "../../observability/tracing/TraceProvider.js";
 import type { IMemoryStorage } from "../../services/memory/IMemoryStorage.js";
 import { InMemoryMemoryStorage } from "../../services/memory/InMemoryMemoryStorage.js";
 import { MemoryOrchestrator } from "../../services/memory/MemoryOrchestrator.js";
@@ -22,6 +23,11 @@ type MemoryAuditService = {
     key: string,
     change: "update" | "delete",
   ): Promise<void> | void;
+  logMemoryCleanup?(params: {
+    triggerSessionId?: string;
+    deletedEntries: number;
+    sessionTtlMs?: number;
+  }): Promise<void> | void;
 };
 
 export type SessionMemoryLifecycleOptions = {
@@ -142,13 +148,28 @@ export function createSessionMemoryLifecycle(
     if (!context || !normalizedSessionKey) {
       return;
     }
+    const traceId = `session-memory:${context.sessionId}`;
+    TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+      stage: "EVENT_RECEIVED",
+      reason: event.reason,
+      sessionKey: normalizedSessionKey,
+      sessionId: context.sessionId,
+    });
 
     if (shouldClearSessionScopedMemory(event.reason)) {
       const cleared = await orchestrator.clearSession(context.sessionId);
       if (!cleared.success) {
         logWarn(`clear failed for ${context.sessionId}: ${cleared.error.message}`);
+        TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+          stage: "CLEAR_FAILED",
+          error: cleared.error.message,
+        });
       }
       snapshots.delete(normalizedSessionKey);
+      TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+        stage: "SESSION_CLEARED",
+        reason: event.reason,
+      });
       await Promise.resolve(
         auditService?.logMemoryMutation(context.sessionId, SESSION_LIFECYCLE_REASON_KEY, "delete"),
       );
@@ -162,8 +183,17 @@ export function createSessionMemoryLifecycle(
     );
     if (!updated.success) {
       logWarn(`update failed for ${context.sessionId}: ${updated.error.message}`);
+      TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+        stage: "UPDATE_FAILED",
+        error: updated.error.message,
+      });
       return;
     }
+    TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+      stage: "SESSION_UPDATED",
+      key: SESSION_LIFECYCLE_REASON_KEY,
+      reason: event.reason,
+    });
     await Promise.resolve(
       auditService?.logMemoryMutation(context.sessionId, SESSION_LIFECYCLE_REASON_KEY, "update"),
     );
@@ -171,13 +201,41 @@ export function createSessionMemoryLifecycle(
     const resolved = await resolver.resolve(context);
     if (!resolved.success) {
       logWarn(`resolve failed for ${context.sessionId}: ${resolved.error.message}`);
+      TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+        stage: "RESOLVE_FAILED",
+        error: resolved.error.message,
+      });
       return;
     }
     snapshots.set(normalizedSessionKey, new Map(resolved.data));
+    TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+      stage: "SNAPSHOT_REFRESHED",
+      keys: resolved.data.size,
+    });
 
     const cleaned = await orchestrator.cleanupExpired();
     if (!cleaned.success) {
       logWarn(`cleanup failed: ${cleaned.error.message}`);
+      TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+        stage: "CLEANUP_FAILED",
+        error: cleaned.error.message,
+      });
+      return;
+    }
+    const sessionTtlMs = orchestrator.getSessionTtlMs();
+    TraceProvider.record(traceId, "SessionMemoryLifecycle", {
+      stage: "CLEANUP_COMPLETED",
+      deletedEntries: cleaned.data,
+      sessionTtlMs,
+    });
+    if (cleaned.data > 0) {
+      await Promise.resolve(
+        auditService?.logMemoryCleanup?.({
+          triggerSessionId: context.sessionId,
+          deletedEntries: cleaned.data,
+          sessionTtlMs,
+        }),
+      );
     }
   };
 

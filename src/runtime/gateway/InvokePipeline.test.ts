@@ -14,7 +14,7 @@ const subject: AuthorizationSubject = {
 
 const intent: TaskIntent = {
   toolName: "message_send",
-  params: { text: "hi" },
+  params: { text: "hi", sessionId: "sess-1" },
   riskLevel: "low",
   traceId: "trace-invoke-1",
 };
@@ -22,16 +22,20 @@ const intent: TaskIntent = {
 describe("handleToolInvoke", () => {
   it("runs tool execution when authorization passes", async () => {
     TraceProvider.resetForTests();
+    const authorize = vi.fn(async () =>
+      Success({
+        approvalId: "approval:1",
+        approved: true,
+        reason: "ok",
+      }),
+    );
+    const auditService = {
+      logInvokeStage: vi.fn(async () => undefined),
+    };
     const result = await handleToolInvoke(
       {
         authService: {
-          authorize: vi.fn(async () =>
-            Success({
-              approvalId: "approval:1",
-              approved: true,
-              reason: "ok",
-            }),
-          ),
+          authorize,
         },
         toolExecutor: {
           run: vi.fn(async () => "done"),
@@ -40,6 +44,7 @@ describe("handleToolInvoke", () => {
         handleError: vi.fn(async (error) =>
           Failure(error instanceof Error ? error : String(error)),
         ),
+        auditService,
       },
       subject,
       intent,
@@ -51,10 +56,35 @@ describe("handleToolInvoke", () => {
     }
     expect(result.data).toBe("done");
     expect(TraceProvider.getTrace("trace-invoke-1").length).toBeGreaterThan(0);
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          traceId: "trace-invoke-1",
+          sessionId: "sess-1",
+        }),
+      }),
+      expect.objectContaining({
+        traceId: "trace-invoke-1",
+        sessionId: "sess-1",
+        params: expect.objectContaining({
+          traceId: "trace-invoke-1",
+          sessionId: "sess-1",
+        }),
+      }),
+    );
+    expect(auditService.logInvokeStage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceId: "trace-invoke-1",
+        stage: "EXEC_SUCCESS",
+      }),
+    );
   });
 
   it("notifies user when authorization is denied", async () => {
     const notifyUser = vi.fn(async () => Success("denied"));
+    const auditService = {
+      logInvokeStage: vi.fn(async () => undefined),
+    };
     const result = await handleToolInvoke(
       {
         authService: {
@@ -73,6 +103,7 @@ describe("handleToolInvoke", () => {
         handleError: vi.fn(async (error) =>
           Failure(error instanceof Error ? error : String(error)),
         ),
+        auditService,
       },
       subject,
       intent,
@@ -80,5 +111,11 @@ describe("handleToolInvoke", () => {
 
     expect(result.success).toBe(true);
     expect(notifyUser).toHaveBeenCalled();
+    expect(auditService.logInvokeStage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceId: "trace-invoke-1",
+        stage: "DENIED",
+      }),
+    );
   });
 });

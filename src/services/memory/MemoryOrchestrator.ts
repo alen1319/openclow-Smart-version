@@ -83,6 +83,10 @@ export class MemoryOrchestrator {
     }
   }
 
+  getSessionTtlMs(): number {
+    return this.sessionTtlMs;
+  }
+
   private determineWriteScope(key: string): MemoryScopeType {
     // 防污染核心：默认 SESSION；显式持久化 key 允许进入 USER。
     return key.startsWith("persist_") ? MemoryScopeType.USER : MemoryScopeType.SESSION;

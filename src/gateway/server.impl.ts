@@ -23,6 +23,7 @@ import {
   writeConfigFile,
 } from "../config/config.js";
 import { formatConfigIssueLines } from "../config/issue-format.js";
+import { resolveStateDir } from "../config/paths.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
 import { clearAgentRunContext, onAgentEvent } from "../infra/agent-events.js";
@@ -77,6 +78,8 @@ import {
   prepareSecretsRuntimeSnapshot,
   resolveCommandSecretsFromActiveRuntimeSnapshot,
 } from "../secrets/runtime.js";
+import { MemoryOrchestrator } from "../services/memory/MemoryOrchestrator.js";
+import { PersistentMemoryStorage } from "../services/memory/PersistentMemoryStorage.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import {
@@ -206,6 +209,17 @@ function createGatewayAuthRateLimiters(rateLimitConfig: AuthRateLimitConfig | un
     exemptLoopback: false,
   });
   return { rateLimiter, browserRateLimiter };
+}
+
+function resolvePositiveInt(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return parsed;
 }
 
 function logGatewayAuthSurfaceDiagnostics(prepared: {
@@ -888,9 +902,30 @@ export async function startGatewayServer(
   let heartbeatUnsub: (() => void) | null = null;
   let transcriptUnsub: (() => void) | null = null;
   let lifecycleUnsub: (() => void) | null = null;
+  const sessionMemoryStorePath = path.join(
+    resolveStateDir(process.env),
+    "memory",
+    "session-memory-store.json",
+  );
+  const sessionMemoryTtlMs = resolvePositiveInt(process.env.OPENCLAW_SESSION_MEMORY_TTL_MS);
+  const sessionMemoryStorage = minimalTestGateway
+    ? null
+    : new PersistentMemoryStorage({
+        filePath: sessionMemoryStorePath,
+        logger: (line) => log.info(line),
+      });
+  const sessionMemoryOrchestrator =
+    sessionMemoryStorage && !minimalTestGateway
+      ? new MemoryOrchestrator(
+          sessionMemoryStorage,
+          sessionMemoryTtlMs ? { sessionTtlMs: sessionMemoryTtlMs } : {},
+        )
+      : undefined;
   const sessionMemoryLifecycle = minimalTestGateway
     ? null
     : createSessionMemoryLifecycle({
+        storage: sessionMemoryStorage ?? undefined,
+        orchestrator: sessionMemoryOrchestrator,
         auditService: getRuntimeAuditService(),
         logger: (line) => log.info(line),
       });

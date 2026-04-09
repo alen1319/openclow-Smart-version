@@ -21,6 +21,23 @@ export type AuditEvent =
       key: string;
       change: "update" | "delete";
       timestamp: number;
+    }
+  | {
+      type: "MEMORY_CLEANUP";
+      triggerSessionId?: string;
+      deletedEntries: number;
+      sessionTtlMs?: number;
+      timestamp: number;
+    }
+  | {
+      type: "INVOKE_STAGE";
+      traceId: string;
+      sessionId?: string;
+      stage: string;
+      toolName?: string;
+      subjectUid?: string;
+      detail?: unknown;
+      timestamp: number;
     };
 
 /**
@@ -87,6 +104,56 @@ export class AuditService {
       timestamp: Date.now(),
     };
     await this.safeWrite(event, `[Audit] MEMORY_CHANGE: Session ${sessionId} modified key ${key}`);
+  }
+
+  async logMemoryCleanup(params: {
+    triggerSessionId?: string;
+    deletedEntries: number;
+    sessionTtlMs?: number;
+  }): Promise<void> {
+    const event: AuditEvent = {
+      type: "MEMORY_CLEANUP",
+      triggerSessionId: params.triggerSessionId?.trim() || undefined,
+      deletedEntries: Math.max(0, Math.floor(params.deletedEntries)),
+      sessionTtlMs:
+        typeof params.sessionTtlMs === "number" && Number.isFinite(params.sessionTtlMs)
+          ? Math.max(0, Math.floor(params.sessionTtlMs))
+          : undefined,
+      timestamp: Date.now(),
+    };
+    await this.safeWrite(
+      event,
+      `[Audit] MEMORY_CLEANUP: deleted ${event.deletedEntries}${event.triggerSessionId ? ` | Session: ${event.triggerSessionId}` : ""}`,
+    );
+  }
+
+  async logInvokeStage(params: {
+    traceId: string;
+    stage: string;
+    sessionId?: string;
+    toolName?: string;
+    subjectUid?: string;
+    detail?: unknown;
+  }): Promise<void> {
+    const traceId = params.traceId.trim();
+    const stage = params.stage.trim();
+    if (!traceId || !stage) {
+      return;
+    }
+    const event: AuditEvent = {
+      type: "INVOKE_STAGE",
+      traceId,
+      stage,
+      sessionId: params.sessionId?.trim() || undefined,
+      toolName: params.toolName?.trim() || undefined,
+      subjectUid: params.subjectUid?.trim() || undefined,
+      detail: params.detail,
+      timestamp: Date.now(),
+    };
+    await this.safeWrite(
+      event,
+      `[Audit] INVOKE_STAGE: ${stage} | Trace: ${traceId}${event.sessionId ? ` | Session: ${event.sessionId}` : ""}`,
+    );
   }
 
   listRecent(limit = 50): AuditEvent[] {

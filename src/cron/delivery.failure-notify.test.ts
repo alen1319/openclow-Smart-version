@@ -2,9 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   resolveDeliveryTarget: vi.fn(),
-  deliverOutboundPayloads: vi.fn(),
+  sendMessage: vi.fn(),
   resolveAgentOutboundIdentity: vi.fn().mockReturnValue({ kind: "identity" }),
-  buildOutboundSessionContext: vi.fn().mockReturnValue({ kind: "session" }),
   createOutboundSendDeps: vi.fn().mockReturnValue({ kind: "deps" }),
   warn: vi.fn(),
 }));
@@ -13,16 +12,12 @@ vi.mock("./isolated-agent/delivery-target.js", () => ({
   resolveDeliveryTarget: mocks.resolveDeliveryTarget,
 }));
 
-vi.mock("../infra/outbound/deliver.js", () => ({
-  deliverOutboundPayloads: mocks.deliverOutboundPayloads,
+vi.mock("../infra/outbound/message.js", () => ({
+  sendMessage: mocks.sendMessage,
 }));
 
 vi.mock("../infra/outbound/identity.js", () => ({
   resolveAgentOutboundIdentity: mocks.resolveAgentOutboundIdentity,
-}));
-
-vi.mock("../infra/outbound/session-context.js", () => ({
-  buildOutboundSessionContext: mocks.buildOutboundSessionContext,
 }));
 
 vi.mock("../cli/outbound-send-deps.js", () => ({
@@ -48,7 +43,7 @@ describe("sendFailureNotificationAnnounce", () => {
       threadId: 42,
       mode: "explicit",
     });
-    mocks.deliverOutboundPayloads.mockResolvedValue([{ ok: true }]);
+    mocks.sendMessage.mockResolvedValue({ result: { messageId: "m-1" } });
   });
 
   afterEach(() => {
@@ -73,20 +68,16 @@ describe("sendFailureNotificationAnnounce", () => {
       to: "123",
       accountId: "bot-a",
     });
-    expect(mocks.buildOutboundSessionContext).toHaveBeenCalledWith({
-      cfg,
-      agentId: "main",
-      sessionKey: "cron:job-1:failure",
-    });
-    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledWith(
+    expect(mocks.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         cfg,
         channel: "telegram",
         to: "123",
         accountId: "bot-a",
         threadId: 42,
-        payloads: [{ text: "Cron failed" }],
-        session: { kind: "session" },
+        content: "Cron failed",
+        agentId: "main",
+        sessionKey: "cron:job-1:failure",
         identity: { kind: "identity" },
         bestEffort: false,
         deps: { kind: "deps" },
@@ -131,7 +122,7 @@ describe("sendFailureNotificationAnnounce", () => {
       "Cron failed",
     );
 
-    expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
     expect(mocks.warn).toHaveBeenCalledWith(
       { error: "target missing" },
       "cron: failed to resolve failure destination target",
@@ -139,7 +130,7 @@ describe("sendFailureNotificationAnnounce", () => {
   });
 
   it("swallows outbound delivery errors after logging", async () => {
-    mocks.deliverOutboundPayloads.mockRejectedValue(new Error("send failed"));
+    mocks.sendMessage.mockRejectedValue(new Error("send failed"));
 
     await expect(
       sendFailureNotificationAnnounce(

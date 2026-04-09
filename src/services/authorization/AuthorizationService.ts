@@ -163,6 +163,7 @@ export class AuthorizationService implements IAuthorizer {
         : undefined;
     const metadata = subject.metadata;
     const candidates = [
+      intent.sessionId,
       intentParams?.sessionId,
       intentParams?.sessionKey,
       metadata.sessionId,
