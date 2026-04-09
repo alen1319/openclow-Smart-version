@@ -246,7 +246,11 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       expect.objectContaining({
         channel: "telegram",
         to: "123456",
-        payloads: [{ text: "Detailed child result, everything finished successfully." }],
+        payloads: [
+          expect.objectContaining({
+            text: "Detailed child result, everything finished successfully.",
+          }),
+        ],
       }),
     );
     expect(deliverOutboundPayloads).toHaveBeenCalledWith(
@@ -558,7 +562,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       expect.objectContaining({
         channel: "telegram",
         to: "123456",
-        payloads: [{ text: "Daily digest ready." }],
+        payloads: [expect.objectContaining({ text: "Daily digest ready." })],
         skipQueue: true,
       }),
     );

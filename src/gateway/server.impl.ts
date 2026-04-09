@@ -79,7 +79,7 @@ import {
   resolveCommandSecretsFromActiveRuntimeSnapshot,
 } from "../secrets/runtime.js";
 import { MemoryOrchestrator } from "../services/memory/MemoryOrchestrator.js";
-import { PersistentMemoryStorage } from "../services/memory/PersistentMemoryStorage.js";
+import { StructuredMemoryStorage } from "../services/memory/StructuredMemoryStorage.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import {
@@ -902,16 +902,21 @@ export async function startGatewayServer(
   let heartbeatUnsub: (() => void) | null = null;
   let transcriptUnsub: (() => void) | null = null;
   let lifecycleUnsub: (() => void) | null = null;
-  const sessionMemoryStorePath = path.join(
-    resolveStateDir(process.env),
+  const gatewayStateDir = resolveStateDir(process.env);
+  const sessionMemoryStoreRootDir = path.join(gatewayStateDir, "memory", "session-memory-store");
+  const legacySessionMemoryStorePath = path.join(
+    gatewayStateDir,
     "memory",
     "session-memory-store.json",
   );
   const sessionMemoryTtlMs = resolvePositiveInt(process.env.OPENCLAW_SESSION_MEMORY_TTL_MS);
+  const sessionMemoryShardCount = resolvePositiveInt(process.env.OPENCLAW_SESSION_MEMORY_SHARDS);
   const sessionMemoryStorage = minimalTestGateway
     ? null
-    : new PersistentMemoryStorage({
-        filePath: sessionMemoryStorePath,
+    : new StructuredMemoryStorage({
+        rootDir: sessionMemoryStoreRootDir,
+        legacyFilePath: legacySessionMemoryStorePath,
+        shardCount: sessionMemoryShardCount,
         logger: (line) => log.info(line),
       });
   const sessionMemoryOrchestrator =

@@ -409,7 +409,7 @@ export async function dispatchCronDelivery(
     const {
       buildOutboundSessionContext,
       createOutboundSendDeps,
-      deliverOutboundPayloads,
+      sendReplyPayloads,
       resolveAgentOutboundIdentity,
     } = await loadDeliveryOutboundRuntime();
     const identity = resolveAgentOutboundIdentity(params.cfgWithAgentDefaults, params.agentId);
@@ -494,7 +494,7 @@ export async function dispatchCronDelivery(
         : undefined;
 
       const runDelivery = async () =>
-        await deliverOutboundPayloads({
+        await sendReplyPayloads({
           cfg: params.cfgWithAgentDefaults,
           channel: delivery.channel,
           to: delivery.to,

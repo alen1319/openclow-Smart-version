@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
+import type { ReplyPayload } from "../../auto-reply/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { Failure, Success } from "../../core/outcome.js";
 import type { DeliveryParcel } from "../../domain/delivery/Parcel.js";
@@ -22,8 +23,8 @@ import {
 } from "./deliver.js";
 import type { OutboundIdentity } from "./identity.js";
 import type { OutboundMirror } from "./mirror.js";
-import { normalizeReplyPayloadsForDelivery } from "./payloads.js";
-import { buildOutboundSessionContext } from "./session-context.js";
+import { normalizeReplyPayloadsForDelivery, type NormalizedOutboundPayload } from "./payloads.js";
+import { buildOutboundSessionContext, type OutboundSessionContext } from "./session-context.js";
 import { resolveOutboundTarget } from "./targets.js";
 
 let messageConfigRuntimePromise: Promise<typeof import("./message.config.runtime.js")> | null =
@@ -85,6 +86,33 @@ export type MessageSendResult = {
   mediaUrls?: string[];
   result?: OutboundDeliveryResult | { messageId: string };
   dryRun?: boolean;
+};
+
+export type ReplyPayloadSendParams = {
+  cfg: OpenClawConfig;
+  channel: string;
+  to: string;
+  payloads: ReplyPayload[];
+  /** Active agent id for per-agent outbound media root scoping. */
+  agentId?: string;
+  sessionKey?: string;
+  session?: OutboundSessionContext;
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  gifPlayback?: boolean;
+  forceDocument?: boolean;
+  accountId?: string;
+  replyToId?: string;
+  threadId?: string | number;
+  bestEffort?: boolean;
+  deps?: OutboundSendDeps;
+  mirror?: OutboundMirror;
+  identity?: OutboundIdentity;
+  gatewayClientScopes?: readonly string[];
+  onError?: (err: unknown, payload: unknown) => void;
+  skipQueue?: boolean;
+  abortSignal?: AbortSignal;
+  silent?: boolean;
 };
 
 type MessagePollParams = {
@@ -365,6 +393,86 @@ async function dispatchDirectViaDeliveryDispatcher(params: {
     }
   }
   return lastResult;
+}
+
+export async function sendReplyPayloads(
+  params: ReplyPayloadSendParams,
+): Promise<OutboundDeliveryResult[]> {
+  const resolvedTarget = resolveOutboundTarget({
+    channel: params.channel,
+    to: params.to,
+    cfg: params.cfg,
+    accountId: params.accountId,
+    mode: "explicit",
+  });
+  if (!resolvedTarget.ok) {
+    throw resolvedTarget.error;
+  }
+  const normalizedPayloads = normalizeReplyPayloadsForDelivery(params.payloads);
+  if (normalizedPayloads.length === 0) {
+    return [];
+  }
+
+  const outboundSession =
+    params.session ??
+    buildOutboundSessionContext({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      sessionKey: params.sessionKey ?? params.mirror?.sessionKey,
+    });
+
+  const canUseDispatcherFastPath =
+    params.replyToId == null &&
+    params.onError == null &&
+    params.skipQueue !== true &&
+    normalizedPayloads.length >= 1;
+  if (canUseDispatcherFastPath) {
+    const directResult = await dispatchDirectViaDeliveryDispatcher({
+      cfg: params.cfg,
+      channel: params.channel,
+      to: resolvedTarget.to,
+      accountId: params.accountId,
+      payloads: normalizedPayloads,
+      threadId: params.threadId,
+      bestEffort: params.bestEffort,
+      deps: params.deps,
+      session: outboundSession,
+      mirror: params.mirror,
+      identity: params.identity,
+      gatewayClientScopes: params.gatewayClientScopes,
+      abortSignal: params.abortSignal,
+      gifPlayback: params.gifPlayback,
+      forceDocument: params.forceDocument,
+      silent: params.silent,
+    });
+    if (directResult) {
+      return [directResult];
+    }
+  }
+
+  return await deliverOutboundPayloads({
+    cfg: params.cfg,
+    channel: params.channel,
+    to: resolvedTarget.to,
+    session: outboundSession,
+    accountId: params.accountId,
+    payloads: normalizedPayloads,
+    replyToId: params.replyToId,
+    threadId: params.threadId,
+    identity: params.identity,
+    gifPlayback: params.gifPlayback,
+    forceDocument: params.forceDocument,
+    deps: params.deps,
+    bestEffort: params.bestEffort,
+    gatewayClientScopes: params.gatewayClientScopes,
+    onError: params.onError as
+      | ((err: unknown, payload: NormalizedOutboundPayload) => void)
+      | undefined,
+    skipQueue: params.skipQueue,
+    abortSignal: params.abortSignal,
+    silent: params.silent,
+    mirror: params.mirror,
+  });
 }
 
 export async function sendMessage(params: MessageSendParams): Promise<MessageSendResult> {
