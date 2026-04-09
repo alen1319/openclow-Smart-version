@@ -51,3 +51,30 @@ Passed during this scan:
 Known limitation:
 
 - `corepack pnpm tsc --noEmit --pretty false` aborted with Node heap OOM in this environment.
+
+## 7) Addendum — This Round Delta (2026-04-09)
+
+### 7.1 Newly touched files
+
+1. `src/gateway/server.impl.ts`
+2. `src/gateway/server-node-events.runtime.ts`
+3. `src/infra/exec-approval-forwarder.runtime.ts`
+4. `src/auto-reply/reply/inbound-context.ts`
+5. `src/auto-reply/reply/inbound-context.test.ts`
+6. `docs/upgrade/architecture-governance-plan.md`
+7. `docs/upgrade/architecture-refactor-roadmap.md`
+
+### 7.2 Conflict risk assessment
+
+1. Gateway recovery wiring (`server.impl.ts`) — **Medium**  
+   Startup recovery now depends on `sendReplyPayloads`; parallel edits in recovery retry logic may conflict on the `deliver` adapter signature.
+2. Runtime barrel exports cleanup — **Low**  
+   Removing `deliverOutboundPayloads` from runtime barrels is low risk internally, but any external/import-by-path consumer will fail fast (desired).
+3. Inbound identity convergence (`inbound-context.ts`) — **Medium**  
+   `AuthSubject` now syncs into `AuthorizationSubject`; parallel patches that treat these as independent fields can reintroduce drift.
+
+### 7.3 Additional guardrails for follow-up PRs
+
+1. Do not re-export `deliverOutboundPayloads` from runtime adapter barrels; use `sendReplyPayloads` as default integration seam.
+2. Treat `AuthSubject` as read-only compatibility input only; write-path must target `AuthorizationSubject`.
+3. When touching delivery recovery code, run queue recovery tests plus at least one gateway smoke test before merge.

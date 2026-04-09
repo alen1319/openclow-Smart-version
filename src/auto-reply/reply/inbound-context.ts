@@ -112,9 +112,18 @@ export function finalizeInboundContext<T extends Record<string, unknown>>(
 
   // Channel ingress identity convergence: map inbound sender context into a
   // stable subject object before command/session routing layers read it.
-  const authorizationSubject = resolveAuthorizationSubjectFromInboundContext(normalized);
+  const legacyAuthSubject = normalized.AuthSubject;
+  const authorizationSubject =
+    resolveAuthorizationSubjectFromInboundContext(normalized) ??
+    normalized.AuthorizationSubject ??
+    legacyAuthSubject;
   if (authorizationSubject) {
     normalized.AuthorizationSubject = authorizationSubject;
+    // Keep legacy field in sync during staged migration.
+    normalized.AuthSubject = authorizationSubject;
+    if (!explicitAuthorizationSubjectKey) {
+      normalized.AuthorizationSubjectKey = authorizationSubject.uid;
+    }
   }
 
   // MediaType/MediaTypes alignment:

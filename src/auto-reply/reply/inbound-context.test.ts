@@ -180,3 +180,43 @@ describe("inbound context contract (providers + extensions)", () => {
     });
   }
 });
+
+describe("identity convergence", () => {
+  it("hydrates AuthorizationSubject from legacy AuthSubject and backfills key", () => {
+    const legacySubject = {
+      uid: "telegram:legacy:42",
+      platform: "tg",
+      role: "allowed",
+      permissions: ["tool.invoke"],
+      metadata: { rawIdentity: { source: "legacy" } },
+    } as const;
+
+    const ctx = finalizeInboundContext({
+      Body: "hello",
+      AuthSubject: legacySubject,
+    });
+
+    expect(ctx.AuthorizationSubject).toEqual(legacySubject);
+    expect(ctx.AuthSubject).toEqual(legacySubject);
+    expect(ctx.AuthorizationSubjectKey).toBe("telegram:legacy:42");
+  });
+
+  it("prefers sender-resolved AuthorizationSubject over stale legacy AuthSubject", () => {
+    const ctx = finalizeInboundContext({
+      Body: "hello",
+      Surface: "telegram",
+      SenderId: "telegram:sender:99",
+      AuthSubject: {
+        uid: "telegram:legacy:42",
+        platform: "tg",
+        role: "guest",
+        permissions: [],
+        metadata: { rawIdentity: { source: "legacy" } },
+      },
+    });
+
+    expect(ctx.AuthorizationSubject?.uid).toBe("telegram:sender:99");
+    expect(ctx.AuthSubject?.uid).toBe("telegram:sender:99");
+    expect(ctx.AuthorizationSubjectKey).toBe("telegram:sender:99");
+  });
+});

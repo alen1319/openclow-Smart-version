@@ -49,3 +49,8 @@ Update: 2026-04-09 (smart-architecture refactor batch)
    - `src/observability/{tracing,audit}/*`
    - `src/surfaces/{common,admin}/*`
 3. Follow-up remains incremental: no big-bang rewrites, route/approval safety first.
+4. Delivery entrypoint convergence continued:
+   - gateway startup delivery recovery now uses `sendReplyPayloads`.
+   - runtime adapter barrels for node-events and approval-forwarder no longer export `deliverOutboundPayloads`.
+5. Inbound identity convergence tightened:
+   - `AuthSubject` compatibility input now syncs into canonical `AuthorizationSubject` with `AuthorizationSubjectKey` backfill.

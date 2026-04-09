@@ -170,7 +170,7 @@ Completed:
 Remaining:
 
 1. Replace remaining legacy identity/session helper usage with domain services.
-2. Consolidate dual naming (`AuthSubject` vs `AuthorizationSubject`).
+2. Remove legacy `AuthSubject` compatibility field after adapter migration completes.
 
 ### Phase 2 (partially started)
 
@@ -178,6 +178,8 @@ Completed:
 
 1. Delivery parcel model and dispatcher/provider abstraction.
 2. Dispatcher normalization + urgent-failure diagnostics hook.
+3. Gateway startup delivery recovery now uses `sendReplyPayloads` as the delivery entrypoint.
+4. Runtime export surfaces no longer expose `deliverOutboundPayloads` in node-events/approval-forwarder runtimes.
 
 Remaining:
 

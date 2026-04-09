@@ -1250,10 +1250,15 @@ export async function startGatewayServer(
     if (!minimalTestGateway) {
       void (async () => {
         const { recoverPendingDeliveries } = await import("../infra/outbound/delivery-queue.js");
-        const { deliverOutboundPayloads } = await import("../infra/outbound/deliver.js");
+        const { sendReplyPayloads } = await import("../infra/outbound/message.js");
         const logRecovery = log.child("delivery-recovery");
         await recoverPendingDeliveries({
-          deliver: deliverOutboundPayloads,
+          deliver: async (params) =>
+            sendReplyPayloads({
+              ...params,
+              replyToId: params.replyToId ?? undefined,
+              threadId: params.threadId ?? undefined,
+            }),
           log: logRecovery,
           cfg: cfgAtStart,
         });

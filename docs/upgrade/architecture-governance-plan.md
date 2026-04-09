@@ -188,6 +188,12 @@ Detailed sequence lives in `docs/upgrade/architecture-refactor-roadmap.md`.
    - `src/observability/audit/AuditService.ts`
 4. Low-risk trace propagation wired through first critical path:
    - Gateway invoke pipeline -> Authorization service -> Delivery dispatcher.
+5. Additional low-risk convergence landed:
+   - Gateway startup delivery recovery now routes through `sendReplyPayloads` (message-layer entrypoint) instead of directly binding `deliverOutboundPayloads`.
+   - Legacy inbound `AuthSubject` is now synchronized into canonical `AuthorizationSubject` during context finalization, with key backfill.
+   - Legacy runtime exports that encouraged direct `deliverOutboundPayloads` entry usage were removed from:
+     - `src/gateway/server-node-events.runtime.ts`
+     - `src/infra/exec-approval-forwarder.runtime.ts`
 
 ### 9.2 Verification snapshot
 
@@ -203,3 +209,4 @@ Targeted suites pass (103 tests across 15 files), including:
 1. Continue “move then delete” for remaining `shared/*` identity/session-adjacent helpers.
 2. Replace direct channel send calls with `DeliveryDispatcher` in phased slices (approval flows first).
 3. Unify `AuthSubject` and `AuthorizationSubject` terminology into a single domain contract.
+4. Continue converging non-Telegram direct delivery fallbacks toward dispatcher-compatible providers.

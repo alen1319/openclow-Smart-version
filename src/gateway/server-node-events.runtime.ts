@@ -7,7 +7,6 @@ export { loadConfig } from "../config/config.js";
 export { updateSessionStore } from "../config/sessions.js";
 export { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 export { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
-export { deliverOutboundPayloads } from "../infra/outbound/deliver.js";
 export { sendReplyPayloads } from "../infra/outbound/message.js";
 export { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
 export { resolveOutboundTarget } from "../infra/outbound/targets.js";
