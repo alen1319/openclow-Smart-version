@@ -1,9 +1,9 @@
-# OpenClow Smart Packaging (macOS)
+# OpenClow Smart Packaging (macOS + Windows)
 
 This folder contains the dedicated packaging and install flow for:
 
 - Repo: `git@github.com:alen1319/openclow-Smart-version.git`
-- Target: stable source-based deployment to another Mac
+- Target: stable source-based deployment to another Mac or Windows host
 
 ## 1) Push your candidate to dedicated repo
 
@@ -60,3 +60,39 @@ Bundle output:
 
 - `dist/smart-release/openclow-smart-<version>-<commit>.tar.gz`
 - `dist/smart-release/openclow-smart-<version>-<commit>.sha256`
+
+## 5) Install on Windows host (PowerShell)
+
+Preferred (clone + build + daemon install + runtime smoke):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smart\install-openclow-smart-windows.ps1
+```
+
+Optional overrides:
+
+- `-SmartRepoUrl`
+- `-SmartRepoRef`
+- `-SmartInstallDir`
+- `-SkipBaselineChecks`
+- `-SkipDaemonInstall`
+- `-SkipRuntimeSmoke`
+
+Runtime verification:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smart\verify-openclow-smart-runtime-windows.ps1
+```
+
+## 6) Windows offline transfer bundle
+
+Create a Windows deployment zip from local checkout:
+
+```bash
+bash scripts/smart/package-openclow-smart-windows.sh
+```
+
+Bundle output:
+
+- `dist/smart-release/openclow-smart-win-<version>-<commit>.zip`
+- `dist/smart-release/openclow-smart-win-<version>-<commit>.sha256`

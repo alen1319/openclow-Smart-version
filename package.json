@@ -1118,10 +1118,6 @@
     "mac:open": "open dist/OpenClaw.app",
     "mac:package": "bash scripts/package-mac-app.sh",
     "mac:restart": "bash scripts/restart-mac.sh",
-    "smart:install:mac": "bash scripts/smart/install-openclow-smart-mac.sh",
-    "smart:package:mac": "bash scripts/smart/package-openclow-smart-mac.sh",
-    "smart:verify:runtime": "bash scripts/smart/verify-openclow-smart-runtime.sh",
-    "workspace:state:save": "node scripts/save-workspace-state.mjs",
     "moltbot:rpc": "node scripts/run-node.mjs agent --mode rpc --json",
     "openclaw": "node scripts/run-node.mjs",
     "openclaw:rpc": "node scripts/run-node.mjs agent --mode rpc --json",
@@ -1149,6 +1145,12 @@
     "release:plugins:npm:plan": "node --import tsx scripts/plugin-npm-release-plan.ts",
     "runtime-sidecars:check": "node --import tsx scripts/generate-runtime-sidecar-paths-baseline.ts --check",
     "runtime-sidecars:gen": "node --import tsx scripts/generate-runtime-sidecar-paths-baseline.ts --write",
+    "smart:install:mac": "bash scripts/smart/install-openclow-smart-mac.sh",
+    "smart:install:windows": "powershell -ExecutionPolicy Bypass -File scripts/smart/install-openclow-smart-windows.ps1",
+    "smart:package:mac": "bash scripts/smart/package-openclow-smart-mac.sh",
+    "smart:package:windows": "bash scripts/smart/package-openclow-smart-windows.sh",
+    "smart:verify:runtime": "bash scripts/smart/verify-openclow-smart-runtime.sh",
+    "smart:verify:runtime:windows": "powershell -ExecutionPolicy Bypass -File scripts/smart/verify-openclow-smart-runtime-windows.ps1",
     "stage:bundled-plugin-runtime-deps": "node scripts/stage-bundled-plugin-runtime-deps.mjs",
     "start": "node scripts/run-node.mjs",
     "test": "vitest run --config vitest.config.ts",
@@ -1224,7 +1226,8 @@
     "tui:dev": "OPENCLAW_PROFILE=dev node scripts/run-node.mjs --dev tui",
     "ui:build": "node scripts/ui.js build",
     "ui:dev": "node scripts/ui.js dev",
-    "ui:install": "node scripts/ui.js install"
+    "ui:install": "node scripts/ui.js install",
+    "workspace:state:save": "node scripts/save-workspace-state.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.18.0",
