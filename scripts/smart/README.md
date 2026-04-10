@@ -84,6 +84,20 @@ Runtime verification:
 powershell -ExecutionPolicy Bypass -File .\scripts\smart\verify-openclow-smart-runtime-windows.ps1
 ```
 
+Common recovery (if you hit `ERR_MODULE_NOT_FOUND: tsx`, `ERR_PNPM_NO_GLOBAL_BIN_DIR`, or missing `dist/entry.mjs`):
+
+```powershell
+cd $env:USERPROFILE\.openclow-smart\openclaw-full
+corepack enable
+corepack prepare pnpm@10.32.1 --activate
+pnpm setup
+$env:PNPM_HOME = "$env:LOCALAPPDATA\pnpm"
+$env:Path = "$env:PNPM_HOME;$env:Path"
+pnpm install --frozen-lockfile
+powershell -ExecutionPolicy Bypass -File .\scripts\smart\install-openclow-smart-windows.ps1 -SkipDaemonInstall -SkipRuntimeSmoke
+powershell -ExecutionPolicy Bypass -File .\scripts\smart\verify-openclow-smart-runtime-windows.ps1
+```
+
 ## 6) Windows offline transfer bundle
 
 Create a Windows deployment zip from local checkout:

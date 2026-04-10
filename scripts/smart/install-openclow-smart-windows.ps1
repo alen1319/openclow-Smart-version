@@ -75,6 +75,12 @@ function Command-Exists([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Assert-LastExitCode([string]$StepName) {
+    if ($LASTEXITCODE -ne 0) {
+        Fail-Install "$StepName failed (exit code: $LASTEXITCODE)."
+    }
+}
+
 function Ensure-ExecutionPolicy {
     $policy = Get-ExecutionPolicy
     if ($policy -eq "Restricted" -or $policy -eq "AllSigned") {
@@ -115,16 +121,19 @@ function Install-Node {
     if (Command-Exists "winget") {
         Log-Info "Installing Node.js via winget (OpenJS.NodeJS.LTS)"
         & winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements | Out-Null
+        Assert-LastExitCode "winget install OpenJS.NodeJS.LTS"
         return
     }
     if (Command-Exists "choco") {
         Log-Info "Installing Node.js via chocolatey"
         & choco install nodejs-lts -y | Out-Null
+        Assert-LastExitCode "choco install nodejs-lts"
         return
     }
     if (Command-Exists "scoop") {
         Log-Info "Installing Node.js via scoop"
         & scoop install nodejs-lts | Out-Null
+        Assert-LastExitCode "scoop install nodejs-lts"
         return
     }
     Fail-Install "Cannot install Node.js automatically. Please install Node $SmartNodeTargetMajor manually."
@@ -153,6 +162,7 @@ function Ensure-Git {
     if (Command-Exists "winget") {
         Log-Info "Installing Git via winget."
         & winget install Git.Git --accept-package-agreements --accept-source-agreements | Out-Null
+        Assert-LastExitCode "winget install Git.Git"
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
     } else {
         Fail-Install "Git is required. Install Git for Windows: https://git-scm.com/download/win"
@@ -162,16 +172,36 @@ function Ensure-Git {
     }
 }
 
+function Ensure-PnpmGlobalBin {
+    $pnpmHome = if ($env:PNPM_HOME) { $env:PNPM_HOME } else { Join-Path $env:LOCALAPPDATA "pnpm" }
+    if (-not [string]::IsNullOrWhiteSpace($pnpmHome)) {
+        New-Item -ItemType Directory -Path $pnpmHome -Force | Out-Null
+        $env:PNPM_HOME = $pnpmHome
+        $pathEntries = $env:Path -split ";"
+        if ($pathEntries -notcontains $pnpmHome) {
+            $env:Path = "$pnpmHome;$($env:Path)"
+        }
+    }
+    & pnpm setup
+    if ($LASTEXITCODE -ne 0) {
+        Log-Warn "pnpm setup returned exit code $LASTEXITCODE; continuing with current PNPM_HOME/PATH."
+    }
+}
+
 function Ensure-Pnpm {
     if (-not (Command-Exists "corepack")) {
         Fail-Install "Missing corepack. Ensure Node installation is complete."
     }
     & corepack enable
+    Assert-LastExitCode "corepack enable"
     & corepack prepare "pnpm@$SmartPnpmVersion" --activate
+    Assert-LastExitCode "corepack prepare pnpm@$SmartPnpmVersion --activate"
     if (-not (Command-Exists "pnpm")) {
         Fail-Install "pnpm is unavailable after corepack activation."
     }
+    Ensure-PnpmGlobalBin
     $pnpmVersion = (& pnpm --version).Trim()
+    Assert-LastExitCode "pnpm --version"
     Log-Info "Using pnpm $pnpmVersion"
 }
 
@@ -183,10 +213,13 @@ function Prepare-Checkout {
         Push-Location $SmartInstallDir
         try {
             & git fetch --tags origin
+            Assert-LastExitCode "git fetch --tags origin"
             & git checkout $SmartRepoRef
+            Assert-LastExitCode "git checkout $SmartRepoRef"
             $hasRemoteRef = (& git rev-parse --verify "origin/$SmartRepoRef" 2>$null) -ne $null
             if ($hasRemoteRef) {
                 & git reset --hard "origin/$SmartRepoRef"
+                Assert-LastExitCode "git reset --hard origin/$SmartRepoRef"
             }
         } finally {
             Pop-Location
@@ -198,6 +231,30 @@ function Prepare-Checkout {
     }
     Log-Info "Cloning $SmartRepoUrl#$SmartRepoRef to $SmartInstallDir"
     & git clone --branch $SmartRepoRef $SmartRepoUrl $SmartInstallDir
+    Assert-LastExitCode "git clone --branch $SmartRepoRef $SmartRepoUrl"
+}
+
+function Ensure-A2uiFallbackBundle {
+    $bundlePath = Join-Path $SmartInstallDir "src\canvas-host\a2ui\a2ui.bundle.js"
+    if (Test-Path $bundlePath) {
+        return
+    }
+    $a2uiRendererDir = Join-Path $SmartInstallDir "vendor\a2ui\renderers\lit"
+    $a2uiAppDir = Join-Path $SmartInstallDir "apps\shared\OpenClawKit\Tools\CanvasA2UI"
+    if ((Test-Path $a2uiRendererDir) -and (Test-Path $a2uiAppDir)) {
+        return
+    }
+
+    Log-Warn "A2UI sources and prebuilt bundle are missing; writing fallback src/canvas-host/a2ui/a2ui.bundle.js."
+    $bundleDir = Split-Path -Parent $bundlePath
+    New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
+    @"
+(function () {
+  if (typeof console !== "undefined" && typeof console.warn === "function") {
+    console.warn("[openclow-smart] A2UI fallback bundle is active. Canvas A2UI features are reduced.");
+  }
+})();
+"@ | Set-Content -Path $bundlePath -Encoding UTF8
 }
 
 function Build-SmartRuntime {
@@ -205,14 +262,20 @@ function Build-SmartRuntime {
     try {
         Log-Info "Installing dependencies"
         & pnpm install --frozen-lockfile
+        Assert-LastExitCode "pnpm install --frozen-lockfile"
+        Ensure-A2uiFallbackBundle
         if (-not $SkipBaselineChecks) {
             Log-Info "Running baseline checks"
             & pnpm check:base-config-schema
+            Assert-LastExitCode "pnpm check:base-config-schema"
             & pnpm config:docs:check
+            Assert-LastExitCode "pnpm config:docs:check"
         }
         Log-Info "Building runtime"
         & pnpm build
+        Assert-LastExitCode "pnpm build"
         & pnpm build:strict-smoke
+        Assert-LastExitCode "pnpm build:strict-smoke"
     } finally {
         Pop-Location
     }
@@ -223,6 +286,7 @@ function Link-CLI {
     try {
         Log-Info "Linking openclaw CLI globally"
         & pnpm link --global
+        Assert-LastExitCode "pnpm link --global"
     } finally {
         Pop-Location
     }
@@ -237,7 +301,9 @@ function Install-GatewayDaemon {
     try {
         Log-Info "Installing and restarting gateway daemon"
         & node openclaw.mjs gateway install --force --runtime $SmartRuntime --port $SmartGatewayPort
+        Assert-LastExitCode "node openclaw.mjs gateway install"
         & node openclaw.mjs gateway restart
+        Assert-LastExitCode "node openclaw.mjs gateway restart"
     } finally {
         Pop-Location
     }
@@ -251,6 +317,7 @@ function Bootstrap-Workspace {
     try {
         Log-Info "Bootstrapping workspace at $SmartWorkspaceDir"
         & node openclaw.mjs setup --workspace $SmartWorkspaceDir --workspace-template claude-code
+        Assert-LastExitCode "node openclaw.mjs setup --workspace"
     } finally {
         Pop-Location
     }
@@ -265,9 +332,13 @@ function Runtime-Smoke {
     try {
         Log-Info "Running runtime smoke checks"
         & node openclaw.mjs --version
+        Assert-LastExitCode "node openclaw.mjs --version"
         & node openclaw.mjs status --all
+        Assert-LastExitCode "node openclaw.mjs status --all"
         & node openclaw.mjs health --json
+        Assert-LastExitCode "node openclaw.mjs health --json"
         & node openclaw.mjs channels status --probe --json
+        Assert-LastExitCode "node openclaw.mjs channels status --probe --json"
     } finally {
         Pop-Location
     }

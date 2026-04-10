@@ -27,9 +27,12 @@ function Ensure-Checkout {
     }
 }
 
-function Run-Check([string]$Name, [string[]]$Args) {
+function Run-Check([string]$Name, [string[]]$NodeArgs) {
     Log-Step "Running $Name"
-    & node @Args
+    & node @NodeArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "[openclow-smart] check failed: $Name (exit code: $LASTEXITCODE)"
+    }
 }
 
 function Main {
